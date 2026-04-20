@@ -2338,6 +2338,7 @@ const App = {
 
     if (hasBgVideo) {
       // ── bgVideo 있을 때: play() + rAF 캡처 방식 ────────────────
+      // rAF는 60fps로 호출되므로 30fps 기준으로 프레임 스킵 처리
       bgVideo.currentTime = 0
       await new Promise(r => {
         bgVideo.onseeked = () => { bgVideo.onseeked = null; r() }
@@ -2346,18 +2347,32 @@ const App = {
       bgVideo.play().catch(() => {})
 
       let encodedFrames = 0
-      const encodeStartMs = performance.now()
+      let lastFrameTime = -1  // 중복 rAF 프레임 스킵용
+      const frameDuration = 1000 / FPS  // 33.33ms per frame
 
       await new Promise((resolve) => {
-        const encodeFrame = () => {
+        const encodeFrame = (now) => {
           if (this._renderCancelFlag) { videoEncoder.close(); muxer.finalize(); resolve(); return }
           if (encodedFrames >= totalFrames) { resolve(); return }
 
+          // encodeQueueSize 백프레셔: 큐가 너무 많이 쌓이면 잠시 대기
+          if (videoEncoder.encodeQueueSize > 10) {
+            requestAnimationFrame(encodeFrame)
+            return
+          }
+
+          // 30fps 기준으로 rAF 60fps 스킵 처리
+          if (lastFrameTime >= 0 && (now - lastFrameTime) < frameDuration * 0.8) {
+            requestAnimationFrame(encodeFrame)
+            return
+          }
+          lastFrameTime = now
+
           const t = encodedFrames / FPS
 
-          // bgVideo 루프 처리 (영상 길이보다 대본이 길 경우)
+          // bgVideo 루프 처리
           const vidDur = bgVideo.duration || duration
-          if (bgVideo.currentTime > vidDur - 0.1) {
+          if (bgVideo.currentTime >= vidDur - 0.05) {
             bgVideo.currentTime = 0
           }
 
@@ -2390,9 +2405,14 @@ const App = {
       })
 
     } else {
-      // ── bgVideo 없을 때: 빠른 오프라인 렌더링 ──────────────────
+      // ── bgVideo 없을 때: setTimeout yield 오프라인 렌더링 ────────
       for (let f = 0; f < totalFrames; f++) {
         if (this._renderCancelFlag) { videoEncoder.close(); muxer.finalize(); return null }
+
+        // 인코더 큐 백프레셔 대기
+        while (videoEncoder.encodeQueueSize > 10) {
+          await new Promise(r => setTimeout(r, 5))
+        }
 
         const t = f / FPS
 
@@ -3390,7 +3410,7 @@ const App = {
       const totalFrames = Math.ceil(estimatedDuration * FPS)
 
       if (hasBgVideo) {
-        // bgVideo play() + rAF 캡처 → 자연스러운 재생 보장
+        // bgVideo play() + rAF 캡처 + 백프레셔 제어
         bgVideo.currentTime = 0
         await new Promise(r => {
           bgVideo.onseeked = () => { bgVideo.onseeked = null; r() }
@@ -3399,14 +3419,21 @@ const App = {
         bgVideo.play().catch(() => {})
 
         let encodedFramesNA = 0
+        let lastFrameTimeNA = -1
+        const frameDurNA = 1000 / FPS
+
         await new Promise((resolve) => {
-          const encodeFrame = () => {
+          const encodeFrame = (now) => {
             if (this._renderCancelFlag) { videoEncoder.close(); muxer.finalize(); resolve(); return }
             if (encodedFramesNA >= totalFrames) { resolve(); return }
 
+            if (videoEncoder.encodeQueueSize > 10) { requestAnimationFrame(encodeFrame); return }
+            if (lastFrameTimeNA >= 0 && (now - lastFrameTimeNA) < frameDurNA * 0.8) { requestAnimationFrame(encodeFrame); return }
+            lastFrameTimeNA = now
+
             const t = encodedFramesNA / FPS
             const vidDur = bgVideo.duration || estimatedDuration
-            if (bgVideo.currentTime > vidDur - 0.1) bgVideo.currentTime = 0
+            if (bgVideo.currentTime >= vidDur - 0.05) bgVideo.currentTime = 0
 
             const vw = bgVideo.videoWidth || W, vh = bgVideo.videoHeight || H
             const scale = Math.max(W / vw, H / vh)
@@ -3433,12 +3460,16 @@ const App = {
         })
 
       } else {
-        // 그라데이션 배경: 빠른 오프라인 렌더링
+        // 그라데이션: 오프라인 렌더링 + 백프레셔 대기
         let encodedFramesNA = 0
         await new Promise((resolve) => {
-          const encodeFrame = () => {
+          const encodeFrame = async () => {
             if (this._renderCancelFlag) { videoEncoder.close(); muxer.finalize(); resolve(); return }
             if (encodedFramesNA >= totalFrames) { resolve(); return }
+
+            while (videoEncoder.encodeQueueSize > 10) {
+              await new Promise(r => setTimeout(r, 5))
+            }
 
             const t = encodedFramesNA / FPS
 
@@ -3467,9 +3498,10 @@ const App = {
             if (encodedFramesNA % 15 === 0)
               setProgress(10 + (encodedFramesNA / totalFrames) * 82, `프레임 렌더링... ${encodedFramesNA}/${totalFrames}`)
 
-            requestAnimationFrame(encodeFrame)
+            if (encodedFramesNA % 30 === 0) await new Promise(r => setTimeout(r, 0))
+            encodeFrame()
           }
-          requestAnimationFrame(encodeFrame)
+          encodeFrame()
         })
       }
 
