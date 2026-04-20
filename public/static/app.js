@@ -2337,55 +2337,47 @@ const App = {
     const totalFrames = Math.ceil(duration * FPS)
 
     if (hasBgVideo) {
-      // ── bgVideo 있을 때: bgVideo.currentTime 동기화 방식 ─────────
-      // ★ 핵심: encodedFrames 기준이 아닌 bgVideo.currentTime을 timestamp로 사용
-      // bgVideo가 실제로 재생된 시간 = 인코딩 타임스탬프 → 속도 100% 일치
+      // ── bgVideo 있을 때: ended 이벤트로 루프, encodedFrames/FPS로 timestamp ─
+      // loop=false → ended 시 currentTime=0 & play() 재시작으로 원본 속도 유지
+      bgVideo.loop = false
       bgVideo.currentTime = 0
       await new Promise(r => {
         bgVideo.onseeked = () => { bgVideo.onseeked = null; r() }
         setTimeout(r, 800)
       })
+
+      // ended 이벤트: 루프 재생 처리
+      bgVideo.onended = () => {
+        bgVideo.currentTime = 0
+        bgVideo.play().catch(() => {})
+      }
       bgVideo.play().catch(() => {})
 
       let encodedFrames = 0
-      let lastCapturedVideoTime = -1  // 동일 프레임 중복 캡처 방지
 
       await new Promise((resolve) => {
         const encodeFrame = () => {
-          if (this._renderCancelFlag) { videoEncoder.close(); muxer.finalize(); resolve(); return }
-          // ★ 종료: 인코딩 프레임 수 OR TTS 전체 길이 도달 시 종료
-          if (encodedFrames >= totalFrames) { resolve(); return }
-
-          // ★ bgVideo.currentTime을 직접 timestamp로 사용
-          const vidTime = bgVideo.currentTime
-          const vidDur  = bgVideo.duration || duration
-
-          // bgVideo 루프 처리 (끝에 도달하면 다시 처음으로)
-          if (vidTime >= vidDur - 0.05) {
-            bgVideo.currentTime = 0
-            requestAnimationFrame(encodeFrame)
-            return
+          if (this._renderCancelFlag) {
+            bgVideo.onended = null
+            videoEncoder.close(); muxer.finalize(); resolve(); return
+          }
+          if (encodedFrames >= totalFrames) {
+            bgVideo.onended = null
+            resolve(); return
           }
 
-          // 같은 프레임 중복 캡처 방지 (bgVideo가 아직 다음 프레임으로 이동 안 한 경우)
-          if (Math.abs(vidTime - lastCapturedVideoTime) < 0.001) {
-            requestAnimationFrame(encodeFrame)
-            return
-          }
-          lastCapturedVideoTime = vidTime
-
-          // 백프레셔: 인코더 큐가 차면 bgVideo를 pause하고 큐가 빠질 때까지 대기
-          if (videoEncoder.encodeQueueSize > 8) {
+          // 백프레셔: 큐가 차면 bgVideo pause 후 대기
+          if (videoEncoder.encodeQueueSize > 15) {
             bgVideo.pause()
             const waitAndResume = () => {
-              if (videoEncoder.encodeQueueSize <= 4) {
+              if (videoEncoder.encodeQueueSize <= 6) {
                 bgVideo.play().catch(() => {})
                 requestAnimationFrame(encodeFrame)
               } else {
-                setTimeout(waitAndResume, 5)
+                setTimeout(waitAndResume, 8)
               }
             }
-            setTimeout(waitAndResume, 5)
+            setTimeout(waitAndResume, 8)
             return
           }
 
@@ -2395,14 +2387,14 @@ const App = {
           const dw = vw * scale, dh = vh * scale
           ctx.drawImage(bgVideo, (W - dw) / 2, (H - dh) / 2, dw, dh)
 
-          // ★ timestamp = bgVideo.currentTime (실제 재생 위치 기준)
-          const timestamp = Math.round(vidTime * 1_000_000)
-          const seg = segments.find(s => vidTime >= s.start && vidTime < s.end)
+          const t = encodedFrames / FPS
+          const seg = segments.find(s => t >= s.start && t < s.end)
           if (seg) {
             const lines = seg.text.split('\n').filter(Boolean)
             this._drawSubtitle(ctx, lines, W, H, fontSize, fontColor, hasBgBar, position, fontFamily, bgColor)
           }
 
+          const timestamp = Math.round(encodedFrames / FPS * 1_000_000)
           const frame = new VideoFrame(canvas, { timestamp, duration: Math.round(1_000_000 / FPS) })
           videoEncoder.encode(frame, { keyFrame: encodedFrames % (FPS * 2) === 0 })
           frame.close()
@@ -2502,6 +2494,11 @@ const App = {
     if (hasBgVideo) {
       bgVideo.currentTime = 0
       await new Promise(r => { bgVideo.onseeked = r; setTimeout(r, 500) })
+      // ★ MediaRecorder 방식도 loop=false이므로 ended 시 재시작 처리
+      bgVideo.onended = () => {
+        bgVideo.currentTime = 0
+        bgVideo.play().catch(() => {})
+      }
     }
     audio.play()
     if (hasBgVideo) bgVideo.play().catch(() => {})
@@ -2549,6 +2546,7 @@ const App = {
           animFrame = requestAnimationFrame(drawFrame)
         } else {
           cancelAnimationFrame(animFrame)
+          if (hasBgVideo) bgVideo.onended = null
           recorder.stop()
           audio.pause()
           try { audioCtx.close() } catch(e) {}
@@ -2576,7 +2574,7 @@ const App = {
       const v   = document.createElement('video')
       v.src     = url
       v.muted   = true
-      v.loop    = true
+      v.loop    = false  // ★ 루프는 코드로 제어 (loop=true면 currentTime 역행으로 timestamp 오류)
       v.playsInline = true
       v.onloadeddata = () => { resolve(v) }  // play()는 렌더 시작 시 직접 호출
       v.onerror  = reject
@@ -3441,59 +3439,57 @@ const App = {
       const totalFrames = Math.ceil(estimatedDuration * FPS)
 
       if (hasBgVideo) {
-        // ★ bgVideo.currentTime 동기화 방식 (속도 100% 일치)
+        // ★ ended 이벤트 루프 + encodedFrames/FPS timestamp (안정적 종료 보장)
+        bgVideo.loop = false
         bgVideo.currentTime = 0
         await new Promise(r => {
           bgVideo.onseeked = () => { bgVideo.onseeked = null; r() }
           setTimeout(r, 800)
         })
+
+        bgVideo.onended = () => {
+          bgVideo.currentTime = 0
+          bgVideo.play().catch(() => {})
+        }
         bgVideo.play().catch(() => {})
 
         let encodedFramesNA = 0
-        let lastCapturedVideoTimeNA = -1
 
         await new Promise((resolve) => {
           const encodeFrame = () => {
-            if (this._renderCancelFlag) { videoEncoder.close(); muxer.finalize(); resolve(); return }
-            if (encodedFramesNA >= totalFrames) { resolve(); return }
-
-            const vidTime = bgVideo.currentTime
-            const vidDur  = bgVideo.duration || estimatedDuration
-
-            if (vidTime >= vidDur - 0.05) {
-              bgVideo.currentTime = 0
-              requestAnimationFrame(encodeFrame); return
+            if (this._renderCancelFlag) {
+              bgVideo.onended = null
+              videoEncoder.close(); muxer.finalize(); resolve(); return
             }
-
-            // 같은 프레임 중복 캡처 방지
-            if (Math.abs(vidTime - lastCapturedVideoTimeNA) < 0.001) {
-              requestAnimationFrame(encodeFrame); return
+            if (encodedFramesNA >= totalFrames) {
+              bgVideo.onended = null
+              resolve(); return
             }
-            lastCapturedVideoTimeNA = vidTime
 
             // 백프레셔: 큐 차면 bgVideo pause 후 재개
-            if (videoEncoder.encodeQueueSize > 8) {
+            if (videoEncoder.encodeQueueSize > 15) {
               bgVideo.pause()
               const waitAndResume = () => {
-                if (videoEncoder.encodeQueueSize <= 4) {
+                if (videoEncoder.encodeQueueSize <= 6) {
                   bgVideo.play().catch(() => {})
                   requestAnimationFrame(encodeFrame)
-                } else { setTimeout(waitAndResume, 5) }
+                } else { setTimeout(waitAndResume, 8) }
               }
-              setTimeout(waitAndResume, 5); return
+              setTimeout(waitAndResume, 8); return
             }
 
             const vw = bgVideo.videoWidth || W, vh = bgVideo.videoHeight || H
             const scale = Math.max(W / vw, H / vh)
             ctx.drawImage(bgVideo, (W - vw*scale)/2, (H - vh*scale)/2, vw*scale, vh*scale)
 
-            const seg = segments.find(s => vidTime >= s.start && vidTime < s.end)
+            const t = encodedFramesNA / FPS
+            const seg = segments.find(s => t >= s.start && t < s.end)
             if (seg) {
               const lines = seg.text ? seg.text.split('\n').filter(Boolean) : (seg.lines || [])
               this._drawSubtitle(ctx, lines, W, H, fontSize, fontColor, hasBgBar, position, fontFamily, bgColor)
             }
 
-            const timestamp = Math.round(vidTime * 1_000_000)
+            const timestamp = Math.round(encodedFramesNA / FPS * 1_000_000)
             const frame = new VideoFrame(canvas, { timestamp, duration: Math.round(1_000_000 / FPS) })
             videoEncoder.encode(frame, { keyFrame: encodedFramesNA % (FPS * 2) === 0 })
             frame.close()
@@ -3579,6 +3575,11 @@ const App = {
         bgVideo.onseeked = () => { bgVideo.onseeked = null; r() }
         setTimeout(r, 800)
       })
+      // ★ ended 이벤트로 루프 처리 (loop=false)
+      bgVideo.onended = () => {
+        bgVideo.currentTime = 0
+        bgVideo.play().catch(() => {})
+      }
       bgVideo.play().catch(() => {})
     }
     const startTime = performance.now()
@@ -3586,8 +3587,9 @@ const App = {
 
     await new Promise(resolve => {
       const drawFrame = () => {
-        // ★ bgVideo가 있으면 bgVideo.currentTime 기준, 없으면 performance.now() 기준
-        const elapsed = hasBgVideo ? bgVideo.currentTime : (performance.now() - startTime) / 1000
+        // ★ bgVideo가 있으면 performance.now() 기준 (ended 루프로 bgVideo.currentTime이 리셋되므로)
+        // elapsed = 실제 경과시간으로 종료 조건 판단
+        const elapsed = (performance.now() - startTime) / 1000
         setProgress(Math.min(elapsed / estimatedDuration * 90, 90), `렌더링 중... ${elapsed.toFixed(1)}s`)
 
         if (hasBgVideo) {
@@ -3607,13 +3609,14 @@ const App = {
         }
 
         if (elapsed < estimatedDuration + 0.2) animFrame = requestAnimationFrame(drawFrame)
-        else resolve(null)
+        else { if (hasBgVideo) bgVideo.onended = null; resolve(null) }
       }
       animFrame = requestAnimationFrame(drawFrame)
       recorder.onstop = () => resolve(null)
     })
 
     cancelAnimationFrame(animFrame)
+    if (hasBgVideo) bgVideo.onended = null
     recorder.stop()
     await new Promise(res => { recorder.onstop = () => res(null) })
 
