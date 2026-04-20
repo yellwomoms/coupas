@@ -44,7 +44,7 @@ const App = {
 
     // ── 자막 상세 설정 ─────────────────────────────────────
     subtitleFont: 'NanumSquareRound',
-    subtitleFontSize: 42,
+    subtitleFontSize: 39,
     subtitlePosition: 'middle',
     subtitleFontColor: '#FFFFFF',       // 글자 색
     subtitleBgColor: 'rgba(0,0,0,0.65)', // 배경 색
@@ -805,10 +805,10 @@ const App = {
             <div style="display:grid;grid-template-columns:1fr 1fr;gap:0.5rem;margin-bottom:0.55rem">
               <div>
                 <label style="font-size:0.65rem;color:var(--text-muted);font-weight:600;display:block;margin-bottom:0.2rem">
-                  글자 크기 <strong style="color:var(--text-primary);font-size:0.72rem" id="fontSizeValResynth">${state.subtitleFontSize||42}px</strong>
+                  글자 크기 <strong style="color:var(--text-primary);font-size:0.72rem" id="fontSizeValResynth">${state.subtitleFontSize||39}px</strong>
                 </label>
                 <input type="range" id="subtitleFontSizeResynth" min="20" max="72" step="1"
-                  value="${state.subtitleFontSize||42}"
+                  value="${state.subtitleFontSize||39}"
                   style="width:100%;accent-color:#7c3aed;cursor:pointer"
                   oninput="App.state.subtitleFontSize=parseInt(this.value);const el=document.getElementById('fontSizeValResynth');if(el)el.textContent=this.value+'px'">
               </div>
@@ -818,6 +818,8 @@ const App = {
                   onchange="App.state.subtitlePosition=this.value">
                   <option value="middle" ${(state.subtitlePosition||'middle')==='middle'?'selected':''}>중앙 (기본)</option>
                   <option value="top" ${state.subtitlePosition==='top'?'selected':''}>상단</option>
+                  <option value="top-middle" ${state.subtitlePosition==='top-middle'?'selected':''}>상‑중 사이</option>
+                  <option value="middle-bottom" ${state.subtitlePosition==='middle-bottom'?'selected':''}>중‑하 사이</option>
                   <option value="bottom" ${state.subtitlePosition==='bottom'?'selected':''}>하단</option>
                 </select>
               </div>
@@ -1007,10 +1009,10 @@ const App = {
                 <div style="display:grid;grid-template-columns:1fr 1fr;gap:0.5rem;margin-bottom:0.6rem">
                   <div>
                     <label style="font-size:0.68rem;color:var(--text-muted);font-weight:600">
-                      글자 크기 <strong style="color:var(--text-primary);font-size:0.75rem" id="fontSizeValMain">${state.subtitleFontSize||42}px</strong>
+                      글자 크기 <strong style="color:var(--text-primary);font-size:0.75rem" id="fontSizeValMain">${state.subtitleFontSize||39}px</strong>
                     </label>
                     <input type="range" id="subtitleFontSize" min="20" max="72" step="1"
-                      value="${state.subtitleFontSize||42}"
+                      value="${state.subtitleFontSize||39}"
                       style="width:100%;accent-color:#7c3aed;cursor:pointer;margin-top:0.35rem;display:block"
                       oninput="App.state.subtitleFontSize=parseInt(this.value);const el=document.getElementById('fontSizeValMain');if(el)el.textContent=this.value+'px'">
                   </div>
@@ -1020,6 +1022,8 @@ const App = {
                       onchange="App.state.subtitlePosition=this.value">
                       <option value="middle" ${(state.subtitlePosition||'middle')==='middle'?'selected':''}>중앙 (기본)</option>
                       <option value="top" ${(state.subtitlePosition||'middle')==='top'?'selected':''}>상단</option>
+                      <option value="top-middle" ${state.subtitlePosition==='top-middle'?'selected':''}>상‑중 사이</option>
+                      <option value="middle-bottom" ${state.subtitlePosition==='middle-bottom'?'selected':''}>중‑하 사이</option>
                       <option value="bottom" ${state.subtitlePosition==='bottom'?'selected':''}>하단</option>
                     </select>
                   </div>
@@ -1082,7 +1086,7 @@ const App = {
                 <!-- 실시간 자막 미리보기 -->
                 <div style="background:#111;border-radius:8px;padding:0.75rem;position:relative;overflow:hidden;min-height:52px;display:flex;align-items:${(state.subtitlePosition||'middle')==='top'?'flex-start':(state.subtitlePosition||'middle')==='middle'?'center':'flex-end'};justify-content:center">
                   <div style="padding:0.3rem 0.7rem;border-radius:5px;background:${state.subtitleBgBar!==false?(state.subtitleBgColor||'rgba(0,0,0,0.65)'):'transparent'};text-align:center;max-width:90%">
-                    <span style="font-family:${state.subtitleFont||'NanumSquareRound'};font-size:${Math.round((state.subtitleFontSize||42)*0.55)}px;color:${state.subtitleFontColor||'#FFFFFF'};font-weight:bold;text-shadow:1px 1px 2px ${state.subtitleBgBar!==false?'transparent':'#000'};line-height:1.3">
+                    <span style="font-family:${state.subtitleFont||'NanumSquareRound'};font-size:${Math.round((state.subtitleFontSize||39)*0.55)}px;color:${state.subtitleFontColor||'#FFFFFF'};font-weight:bold;text-shadow:1px 1px 2px ${state.subtitleBgBar!==false?'transparent':'#000'};line-height:1.3">
                       자막 미리보기 텍스트 — ABC 가나다
                     </span>
                   </div>
@@ -1145,10 +1149,10 @@ const App = {
               <div style="display:grid;grid-template-columns:1fr 1fr;gap:0.5rem;margin-bottom:0.5rem">
                 <div>
                   <label style="font-size:0.65rem;color:var(--text-muted);display:block;margin-bottom:0.2rem">
-                    글자 크기 <strong style="color:var(--text-primary);font-size:0.72rem" id="fontSizeValNoTTS">${state.subtitleFontSize||42}px</strong>
+                    글자 크기 <strong style="color:var(--text-primary);font-size:0.72rem" id="fontSizeValNoTTS">${state.subtitleFontSize||39}px</strong>
                   </label>
                   <input type="range" id="subtitleFontSizeNoTTS" min="20" max="72" step="1"
-                    value="${state.subtitleFontSize||42}"
+                    value="${state.subtitleFontSize||39}"
                     style="width:100%;accent-color:#7c3aed;cursor:pointer"
                     oninput="App.state.subtitleFontSize=parseInt(this.value);const el=document.getElementById('fontSizeValNoTTS');if(el)el.textContent=this.value+'px'">
                 </div>
@@ -1158,6 +1162,8 @@ const App = {
                     onchange="App.state.subtitlePosition=this.value">
                     <option value="middle" ${(state.subtitlePosition||'middle')==='middle'?'selected':''}>중앙 (기본)</option>
                     <option value="top" ${(state.subtitlePosition||'middle')==='top'?'selected':''}>상단</option>
+                    <option value="top-middle" ${state.subtitlePosition==='top-middle'?'selected':''}>상‑중 사이</option>
+                    <option value="middle-bottom" ${state.subtitlePosition==='middle-bottom'?'selected':''}>중‑하 사이</option>
                     <option value="bottom" ${state.subtitlePosition==='bottom'?'selected':''}>하단</option>
                   </select>
                 </div>
@@ -2181,7 +2187,7 @@ const App = {
     const fontSizeEl = document.getElementById('subtitleFontSize')
     const positionEl = document.getElementById('subtitlePosition')
     const bgBarEl    = document.getElementById('subtitleBgBar')
-    const fontSize   = parseInt(fontSizeEl?.value || this.state.subtitleFontSize || '42')
+    const fontSize   = parseInt(fontSizeEl?.value || this.state.subtitleFontSize || '39')
     const position   = positionEl?.value || this.state.subtitlePosition || 'middle'
     const fontColor  = this.state.subtitleFontColor || this.state.subtitleColor || '#ffffff'
     const hasBgBar   = bgBarEl ? bgBarEl.checked : (this.state.subtitleBgBar !== false)
@@ -2917,8 +2923,18 @@ const App = {
     let baseY
     if (position === 'top') {
       baseY = SAFE_TOP + fontSize
+    } else if (position === 'top-middle') {
+      // 상단과 중앙의 중간
+      const topY    = SAFE_TOP + fontSize
+      const middleY = Math.round(H / 2 - totalH / 2 + fontSize)
+      baseY = Math.round((topY + middleY) / 2)
     } else if (position === 'middle') {
       baseY = Math.round(H / 2 - totalH / 2 + fontSize)
+    } else if (position === 'middle-bottom') {
+      // 중앙과 하단의 중간
+      const middleY = Math.round(H / 2 - totalH / 2 + fontSize)
+      const bottomY = H - SAFE_BOTTOM - (displayLines.length - 1) * lineH
+      baseY = Math.round((middleY + bottomY) / 2)
     } else {
       // bottom: 가장 아래 줄이 SAFE_BOTTOM 위에 위치
       baseY = H - SAFE_BOTTOM - (displayLines.length - 1) * lineH
@@ -3327,7 +3343,7 @@ const App = {
     const fontSizeEl = document.getElementById('subtitleFontSizeNoTTS') || document.getElementById('subtitleFontSize')
     const positionEl = document.getElementById('subtitlePositionNoTTS') || document.getElementById('subtitlePosition')
     const bgBarEl    = document.getElementById('subtitleBgBar')
-    const fontSize   = parseInt(fontSizeEl?.value || this.state.subtitleFontSize || '42')
+    const fontSize   = parseInt(fontSizeEl?.value || this.state.subtitleFontSize || '39')
     const position   = positionEl?.value || this.state.subtitlePosition || 'middle'
     const fontColor  = this.state.subtitleFontColor || '#ffffff'
     const hasBgBar   = bgBarEl ? bgBarEl.checked : (this.state.subtitleBgBar !== false)
