@@ -459,7 +459,7 @@ const App = {
 
         <!-- 생성 버튼 -->
         <section class="section" style="border-bottom:none">
-          <button class="btn-generate" id="btnGenerate" onclick="${isGenerating ? 'App.cancelScript()' : 'App.generateScript()'}" style="${isGenerating ? 'background:linear-gradient(135deg,#ef4444,#dc2626)' : ''}">
+          <button class="btn-generate" id="btnGenerate" style="${isGenerating ? 'background:linear-gradient(135deg,#ef4444,#dc2626)' : ''}">
             ${isGenerating
               ? `<span class="spinner"></span> 생성 중... <span style="font-size:0.72rem;opacity:0.85;margin-left:4px">(클릭하여 중단)</span>`
               : `<i class="fas fa-magic"></i> AI 대본 생성하기`}
@@ -879,7 +879,7 @@ const App = {
             </div>
 
             <!-- 재합성 버튼 -->
-            <button onclick="${isRendering ? 'App.cancelRendering()' : 'App.startVideoSynthesis()'}"
+            <button id="btnResynth"
               style="width:100%;padding:0.65rem;background:linear-gradient(135deg,${isRendering ? '#ef4444,#dc2626' : '#7c3aed,#a855f7'});border:none;color:white;border-radius:8px;cursor:pointer;font-size:0.82rem;font-weight:700;display:flex;align-items:center;justify-content:center;gap:0.5rem">
               ${isRendering
                 ? `<span class="spinner" style="width:14px;height:14px;border-width:2px"></span> 합성 중... (클릭하여 중단)`
@@ -1087,7 +1087,7 @@ const App = {
                 </div>
               </div>
 
-              <button onclick="${isRendering ? 'App.cancelRendering()' : 'App.startVideoSynthesis()'}" class="btn-generate" style="font-size:0.85rem;padding:0.7rem 1.5rem;background:linear-gradient(135deg,${isRendering ? '#ef4444,#dc2626' : 'var(--primary),var(--primary-dark,#6d28d9)'})">
+              <button id="btnSynthStart" class="btn-generate" style="font-size:0.85rem;padding:0.7rem 1.5rem;background:linear-gradient(135deg,${isRendering ? '#ef4444,#dc2626' : 'var(--primary),var(--primary-dark,#6d28d9)'})">
                 ${isRendering
                   ? `<span class="spinner" style="width:15px;height:15px;border-width:2px"></span>&nbsp; 합성 중... <span style="font-size:0.72rem;opacity:0.85;margin-left:4px">(클릭하여 중단)</span>`
                   : `<i class="fas fa-film"></i> 자막+TTS 영상 합성 시작`}
@@ -1165,7 +1165,7 @@ const App = {
               TTS 없이 합성 시 영상에 오디오가 없습니다. TTS를 먼저 생성하는 것을 권장합니다.
             </div>
 
-            <button onclick="${isRendering ? 'App.cancelRendering()' : 'App.startVideoSynthesisNoTTS()'}" class="btn-generate" style="font-size:0.82rem;padding:0.65rem 1.2rem;background:linear-gradient(135deg,${isRendering ? '#ef4444,#dc2626' : '#fb923c,#f97316'})">
+            <button id="btnSynthNoTTS" class="btn-generate" style="font-size:0.82rem;padding:0.65rem 1.2rem;background:linear-gradient(135deg,${isRendering ? '#ef4444,#dc2626' : '#fb923c,#f97316'})">
               ${isRendering
                 ? `<span class="spinner" style="width:14px;height:14px;border-width:2px"></span> 합성 중... <span style="font-size:0.72rem;opacity:0.85;margin-left:4px">(클릭하여 중단)</span>`
                 : `<i class="fas fa-film"></i> 자막만 합성 (TTS 없이)`}
@@ -1432,10 +1432,13 @@ const App = {
       })
     })
 
-    // 생성 버튼
+    // 생성 버튼 (생성 중이면 중단, 아니면 생성)
     const btnGen = document.getElementById('btnGenerate')
     if (btnGen) {
-      btnGen.addEventListener('click', () => this.generateScript())
+      btnGen.addEventListener('click', () => {
+        if (this.state.isGenerating) this.cancelScript()
+        else this.generateScript()
+      })
     }
 
     // 대본 수정 버튼
@@ -1492,6 +1495,29 @@ const App = {
     const btnGenerateTTS = document.getElementById('btnGenerateTTS')
     if (btnGenerateTTS) {
       btnGenerateTTS.addEventListener('click', () => this.generateTTS())
+    }
+
+    // 영상 합성 버튼들 (재합성 / 합성시작 / NoTTS)
+    const btnResynth = document.getElementById('btnResynth')
+    if (btnResynth) {
+      btnResynth.addEventListener('click', () => {
+        if (this.state.isRendering) this.cancelRendering()
+        else this.startVideoSynthesis()
+      })
+    }
+    const btnSynthStart = document.getElementById('btnSynthStart')
+    if (btnSynthStart) {
+      btnSynthStart.addEventListener('click', () => {
+        if (this.state.isRendering) this.cancelRendering()
+        else this.startVideoSynthesis()
+      })
+    }
+    const btnSynthNoTTS = document.getElementById('btnSynthNoTTS')
+    if (btnSynthNoTTS) {
+      btnSynthNoTTS.addEventListener('click', () => {
+        if (this.state.isRendering) this.cancelRendering()
+        else this.startVideoSynthesisNoTTS()
+      })
     }
 
     // 감정 선택
