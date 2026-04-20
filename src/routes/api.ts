@@ -10,8 +10,40 @@ type Bindings = {
 export const apiRoutes = new Hono<{ Bindings: Bindings }>()
 
 // ─────────────────────────────────────────
-// 페르소나 목록 조회
+// 🚀 초기화 통합 API (페이지 로드 최적화)
+// personas + subtitle-presets + tts-voices + settings + production-presets + jobs
+// D1 batch()로 단일 왕복에 모든 데이터 조회 → 로딩 시간 대폭 단축
 // ─────────────────────────────────────────
+apiRoutes.get('/init', async (c) => {
+  try {
+    // jobs를 제외하고 핵심 설정 데이터만 batch로 빠르게 조회
+    // (jobs는 히스토리 탭 클릭 시 별도 lazy load)
+    const [personasR, presetsR, voicesR, prodPresetsR] = await c.env.DB.batch([
+      c.env.DB.prepare('SELECT * FROM personas ORDER BY id'),
+      c.env.DB.prepare('SELECT * FROM subtitle_presets ORDER BY id'),
+      c.env.DB.prepare('SELECT * FROM tts_voices ORDER BY id'),
+      c.env.DB.prepare('SELECT * FROM production_presets ORDER BY is_default DESC, id ASC'),
+    ])
+    return c.json({
+      ok: true,
+      data: {
+        personas:          personasR.results    || [],
+        subtitlePresets:   presetsR.results     || [],
+        ttsVoices:         voicesR.results      || [],
+        productionPresets: prodPresetsR.results || [],
+        settings: {
+          has_openai:   !!c.env.OPENAI_API_KEY,
+          has_typecast: !!c.env.TYPECAST_API_KEY,
+          has_n8n:      !!c.env.N8N_WEBHOOK_URL,
+          tts_provider: 'typecast'
+        }
+      }
+    })
+  } catch (e: any) {
+    return c.json({ ok: false, error: e.message }, 500)
+  }
+})
+
 apiRoutes.get('/personas', async (c) => {
   try {
     const { results } = await c.env.DB.prepare(
@@ -322,23 +354,26 @@ apiRoutes.post('/tts-preview', async (c) => {
     const rawText = (sample_text || '안녕하세요! 저는 이 목소리로 쇼츠 대본을 읽어드릴 거예요. 잘 부탁드립니다!').trim()
     const audioTempo = Math.max(0.5, Math.min(2.0, speed))
 
-    // 감정별 previous_text 맥락 문장 (smart 모드에서만 작동)
+    // ── 첫 글자 잘림 방지 ──────────────────────────────────────────
+    // previous_text를 충분히 긴 문장으로 + 본문 앞 패딩 추가
     const emotionContextMap: Record<string, string> = {
-      'smart':    '안녕하세요.',
-      'normal':   '안녕하세요.',
-      'happy':    '정말 기쁜 소식이에요! 너무 설레요!',
-      'toneup':   '와! 이거 진짜 대박이에요! 여러분!',
-      'sad':      '사실 저도 많이 힘들었어요. 공감이 가더라고요.',
-      'whisper':  '잠깐, 이거 정말 중요한 얘기예요.',
-      'tonedown': '오늘은 중요한 내용을 말씀드리려 합니다.',
-      'angry':    '이건 정말 놓치면 안 돼요! 꼭 보세요!'
+      'smart':    '네, 안녕하세요. 오늘도 좋은 하루 보내고 계신가요?',
+      'normal':   '네, 안녕하세요. 오늘도 좋은 하루 보내고 계신가요?',
+      'happy':    '와, 정말 기쁜 소식이에요! 여러분 너무 설레지 않나요? 저는 너무 좋아요!',
+      'toneup':   '와! 이거 진짜 대박이에요! 여러분 꼭 보셔야 해요! 놓치면 후회해요!',
+      'sad':      '사실 저도 많이 힘들었어요. 그 마음 너무 공감이 가더라고요. 속상하셨겠어요.',
+      'whisper':  '잠깐, 이거 정말 중요한 얘기예요. 아무한테도 말하지 마세요.',
+      'tonedown': '오늘은 중요한 내용을 말씀드리려 합니다. 잘 들어주시기 바랍니다.',
+      'angry':    '이건 정말 놓치면 안 돼요! 꼭 보세요! 진짜 중요합니다!'
     }
     const prevText = emotionContextMap[emotion_type] || emotionContextMap['smart']
+    // 본문 앞 패딩 추가
+    const paddedText = '음. ' + rawText
 
     // Typecast v1 ssfm-v30: 항상 smart 모드 사용 (preset은 previous_text 불가)
     const payload: any = {
       voice_id,
-      text: rawText,
+      text: paddedText,
       model: 'ssfm-v30',
       language: 'kor',
       prompt: {
@@ -456,24 +491,27 @@ apiRoutes.post('/jobs/:job_id/generate-tts', async (c) => {
 
     const rawText = job.script_content.trim()
 
-    // 감정별 previous_text 맥락 문장 매핑
-    // smart 모드에서 이 문장의 감정/톤이 본문에 자연스럽게 이어짐
+    // ── 첫 글자 잘림 방지 ──────────────────────────────────────────
+    // Typecast ssfm-v30: previous_text가 짧으면 한국어 첫 음절이 묵음 처리됨
+    // 해결책: ① previous_text를 충분히 긴 문장으로 ② 본문 앞에 무음 패딩 추가
     const emotionContextMap: Record<string, string> = {
-      'smart':    '안녕하세요.',
-      'normal':   '안녕하세요.',
-      'happy':    '정말 기쁜 소식이에요! 너무 설레요!',
-      'toneup':   '와! 이거 진짜 대박이에요! 여러분!',
-      'sad':      '사실 저도 많이 힘들었어요. 공감이 가더라고요.',
-      'whisper':  '잠깐, 이거 정말 중요한 얘기예요.',
-      'tonedown': '오늘은 중요한 내용을 말씀드리려 합니다.',
-      'angry':    '이건 정말 놓치면 안 돼요! 꼭 보세요!'
+      'smart':    '네, 안녕하세요. 오늘도 좋은 하루 보내고 계신가요?',
+      'normal':   '네, 안녕하세요. 오늘도 좋은 하루 보내고 계신가요?',
+      'happy':    '와, 정말 기쁜 소식이에요! 여러분 너무 설레지 않나요? 저는 너무 좋아요!',
+      'toneup':   '와! 이거 진짜 대박이에요! 여러분 꼭 보셔야 해요! 놓치면 후회해요!',
+      'sad':      '사실 저도 많이 힘들었어요. 그 마음 너무 공감이 가더라고요. 속상하셨겠어요.',
+      'whisper':  '잠깐, 이거 정말 중요한 얘기예요. 아무한테도 말하지 마세요.',
+      'tonedown': '오늘은 중요한 내용을 말씀드리려 합니다. 잘 들어주시기 바랍니다.',
+      'angry':    '이건 정말 놓치면 안 돼요! 꼭 보세요! 진짜 중요합니다!'
     }
     const prevText = emotionContextMap[emotion_type] || emotionContextMap['smart']
+    // 본문 앞에 무음 패딩 추가 (첫 음절 클리핑 방지)
+    const paddedText = '음. ' + rawText
 
     // ── Typecast TTS API 페이로드 (항상 smart 모드) ────────────────
     const ttsPayload: any = {
       voice_id: actualVoiceId,
-      text: rawText,
+      text: paddedText,
       model: 'ssfm-v30',
       language: 'kor',
       prompt: {
@@ -825,6 +863,212 @@ apiRoutes.delete('/production-presets/:id', async (c) => {
 
     await c.env.DB.prepare('DELETE FROM production_presets WHERE id = ?').bind(id).run()
     return c.json({ ok: true, message: '삭제되었습니다.' })
+  } catch (e: any) {
+    return c.json({ ok: false, error: e.message }, 500)
+  }
+})
+
+// ─────────────────────────────────────────
+// 유튜브/SNS 제목 & 설명글 자동 생성
+// (대본 + 컨텍스트 기반 후킹 제목 3개 + SNS 설명글)
+// ─────────────────────────────────────────
+apiRoutes.post('/jobs/:job_id/generate-title', async (c) => {
+  try {
+    const job_id = c.req.param('job_id')
+    const { product_number = '' } = await c.req.json().catch(() => ({}))
+
+    const job = await c.env.DB.prepare(
+      'SELECT * FROM jobs WHERE job_id = ?'
+    ).bind(job_id).first() as any
+
+    if (!job || !job.script_content) {
+      return c.json({ ok: false, error: '대본이 없습니다.' }, 400)
+    }
+
+    const apiKey = c.env.OPENAI_API_KEY
+    const pNum = (product_number || job.product_number || '').trim()
+
+    // ── 컨텍스트 텍스트에서 #해시태그 추출 ───────────────────────
+    const contextText: string = job.context_text || ''
+    const contextTags: string[] = []
+    const tagRegex = /#[\uAC00-\uD7A3\w]+/g
+    let tagMatch
+    while ((tagMatch = tagRegex.exec(contextText)) !== null) {
+      contextTags.push(tagMatch[0])
+    }
+    const contextTagStr = contextTags.length > 0
+      ? `컨텍스트 태그 (반드시 포함): ${contextTags.join(' ')}`
+      : '컨텍스트 태그 없음'
+
+    // ── 인스타 감성 설명글 예시 (few-shot) ─────────────────────────
+    const instaExamples = `
+[예시1 - 공감·일상형]
+진짜 이거 쓰기 전이랑 후가 완전 달라요 🥹💕
+그냥 별 생각 없이 써봤는데... 어느 순간부터 이게 없으면 불편한 거 있잖아요 ㅋㅋ
+
+처음엔 반신반의했는데 주변에서 다들 어디서 샀냐고 물어볼 때 그 뿌듯함이란 😆!!
+"나 이미 알고 있었어" 이 느낌 아시죠? ㅎㅎ
+
+저처럼 이런 거 찾고 있었던 분들한테 진짜 강추예요 🙌
+한 번 써보면 왜 난리났는지 바로 알게 될 거예요..!
+궁금하신 분들 프로필 링크에서 301번으로 확인해보세요 🔗
+
+[예시2 - 후기·스토리형]
+솔직히 처음엔 그냥 지나치려 했어요 🤔...
+근데 주변에서 너무 좋다고 해서 한번 써봤는데
+아 이거 진짜 왜 이제 알았지 싶더라고요 ㅠㅠ
+
+생각보다 훨씬 편하고, 쓰면 쓸수록 더 애착 가는 스타일이에요 ✨
+이런 게 있었구나~ 싶은 그 설렘!! 저만 이런 건 아니죠? 😅
+
+같은 고민 있으신 분들 한번쯤 써보세요 🙌
+프로필 링크에서 523번으로 바로 확인하실 수 있어요!
+
+[예시3 - 감성·공유형]
+요즘 이런 거 찾는 사람 나뿐인 줄 알았는데 아니었어요 😅ㅋㅋ
+딱 내가 원하던 게 이거였구나 싶었달까요... 🤍
+
+작은 거 하나가 하루를 이렇게 바꿔놓을 줄은 몰랐어요 ✨
+써보면 알아요, 말로 설명하기 어려운 그 느낌!
+
+좋은 거 발견하면 나만 알기 아까워서요 😊💕
+같은 고민이셨던 분들, 프로필 링크에서 확인해보세요 🔗
+`.trim()
+
+    // ── 제목 레퍼런스 ─────────────────────────────────────────────
+    const titleExamples = `
+내가 뺏어먹는 와이프 최애음식ㅋㅋ / 희한한데 유용한 상비템 / 계란초밥의 진실?
+신기해서 사본 SNS 아이디어템 / 자취생 눈돌아가는 일본 발명품
+드디어 찾아냈다ㄷㄷ / 일본 자취생이 몰래 쓰는ㄷㄷ / 1년째 매일 쓰는 이유 있어
+이자카야 절대 안갑니다 / 주변 다 물어본 그 물건 / 반신반의했다가 완전 팬됨ㅋㅋ
+설명서대로 쓰지마세요 / 사고나서 후회? 안 사고 후회? / 써보면 왜 난리났는지 알아
+`.trim()
+
+    // ── 컨텍스트 태그 처리 ────────────────────────────────────────
+    const mustTagLine = contextTags.length > 0
+      ? `\n\n⚠️ 아래 태그는 반드시 그대로 description에 포함할 것 (추가 삭제 불가):\n${contextTags.join(' ')}`
+      : ''
+
+    const prompt = `당신은 인스타그램 감성을 완벽하게 이해한 대한민국 라이프스타일 콘텐츠 크리에이터입니다.
+아래 [대본]을 읽고, 그 대본의 스토리·감정·공감 포인트를 그대로 살려서 인스타그램 캡션을 작성하세요.
+독자가 읽으면서 "아 이 사람 진짜 써봤구나", "나도 이런 거 찾고 있었는데" 하는 느낌이 들게 써야 합니다.
+
+=== 대본 ===
+${job.script_content}
+
+=== 컨텍스트 정보 ===
+- 플랫폼: ${job.platform || 'douyin'}
+- URL: ${job.source_url || ''}${mustTagLine}
+
+=== 인스타그램 감성 캡션 예시 (이 톤·분위기를 반드시 따를 것) ===
+${instaExamples}
+
+=== 제목 레퍼런스 패턴 ===
+${titleExamples}
+
+━━━━━━━━━━━━━━━━━━━━━━━━
+[제목 5개 규칙]
+1. 대본의 핵심 감정·상황을 한 방에 담은 후킹 제목
+2. 10~20자 이내, 한국인이 공감하고 검색하는 자연스러운 말투
+3. 말끝에 ㅋㅋ / ㄷㄷ / ? / !! 중 상황에 맞게 하나 추가 가능
+4. 공감형 / 호기심형 / 후기형 / 반전형 / 일상형 각각 다르게
+
+[SNS 캡션 규칙 — 가장 중요]
+1. 대본의 스토리와 감정을 인스타 일상 포스트처럼 풀어쓸 것
+2. 길이: 대본보다 짧으면 절대 안 됨. 대본과 비슷하거나 더 길게
+3. 말투: 친한 친구한테 카톡 보내듯 솔직하고 따뜻하게. 사무적 표현 금지
+4. 이모지 사용 규칙 (★ 핵심):
+   - 감정이 올라오는 문장마다 어울리는 이모지 1~2개 자연스럽게 삽입
+   - 특히 공감·놀람·기쁨·따뜻함을 표현할 때 꼭 이모지 사용 (🥹 😆 🙌 💕 ✨ 😅 🤍 💛 🫶 🥰 😊 😭 등)
+   - 문장 끝이나 중간에 ...! / !! / ~~ / ㅋㅋ / ㅠㅠ 같은 감탄·말줄임 표현 자유롭게 사용
+   - 매 문장 강제 삽입은 금지 (흐름에 맞을 때만)
+5. 구조: 도입(공감/상황 + 이모지) → 경험/스토리 → 감상/추천 → CTA → 해시태그
+6. 어미: ~요 / ~어요 / ~더라고요 / ~잖아요 / ~거 있잖아요 / ~달까요 등 자연스럽게
+7. 절대 금지: "추천드려요", "이런 분께", "핵심 혜택", 체크리스트 불릿(•), 광고·홍보 말투
+8. 사람 사는 세상 감성: 좋은 걸 발견했을 때 친구에게 공유하듯, 진심 어린 따뜻함이 묻어나야 함
+9. CTA 규칙: ${pNum
+      ? `반드시 본문 마지막에 "프로필 링크에서 ${pNum}번으로 확인해보세요" 형식으로 자연스럽게 포함 (번호 생략 절대 금지)`
+      : '자연스러운 "프로필 링크 확인해보세요" 변형 말투로 마무리'}
+10. 해시태그: ${contextTags.length > 0
+      ? `반드시 ${contextTags.join(' ')} 전부 포함. 추가로 제품·주제 관련 인기 태그 합쳐서 총 5~10개`
+      : '제품·주제·감성 관련 인스타·유튜브 인기 태그 5~10개 (조회수 높고 제품 관련성 높은 태그 선정)'}
+11. 해시태그는 캡션 마지막에 한 줄로 띄어쓰기로 구분
+12. JSON 형식 외 어떤 텍스트도 출력하지 마세요
+13. description 필드의 줄바꿈은 반드시 \\n으로 표현
+
+[줄바꿈 규칙 — 인스타 가독성 핵심]
+- 1~2문장마다 반드시 \\n 줄바꿈 삽입 (3문장 이상 연속 금지)
+- 감정 전환·장면 전환 구간에는 \\n\\n 빈줄 삽입으로 단락 분리
+- 해시태그 앞에는 반드시 \\n\\n 빈줄 삽입
+- 예시 형식:
+  "오늘 우연히 써봤는데 진짜 대박이에요 😲!!\\n이게 이렇게 편할 줄 몰랐거든요 🥹\\n\\n처음엔 별거 아닌 줄 알았는데...\\n써보니까 왜 이게 난리났는지 바로 알겠더라고요 ㅋㅋ\\n\\n같은 고민이셨던 분들 한번만 써보세요 💕🙌\\n\\n#태그1 #태그2 #태그3"
+
+=== 출력 형식 (JSON만) ===
+{
+  "titles": ["제목1","제목2","제목3","제목4","제목5"],
+  "description": "인스타 감성 캡션 전체 (\\n으로 줄바꿈)",
+  "hashtags": ["#태그1","#태그2","#태그3","#태그4","#태그5"]
+}`
+
+    // OpenAI 없으면 샘플 반환
+    if (!apiKey) {
+      const sampleTags = contextTags.length > 0
+        ? [...contextTags, '#생활꿀템', '#일상템', '#쇼핑쇼츠', '#추천템', '#꿀팁'].slice(0, 8)
+        : ['#생활꿀템', '#아이디어상품', '#쇼핑쇼츠', '#일상템', '#추천템', '#꿀팁', '#리뷰']
+      const sampleTagStr = sampleTags.join(' ')
+      const sampleDesc = `진짜 이거 쓰기 전이랑 후가 완전 달라요 🥹\n이런 게 있는 줄도 몰랐는데... 써보고 나서 왜 이제 알았지 싶더라고요 ㅠㅠ\n처음엔 반신반의했는데 어느 순간부터 이게 없으면 불편한 거 있잖아요 ㅋㅋ\n주변에서 다들 어디서 샀냐고 물어볼 때 그 뿌듯함이란... 😆\n같은 고민 있으셨던 분들 한번만 써보세요\n써보면 왜 난리났는지 바로 알게 될 거예요 💕\n\n${sampleTagStr}`
+      return c.json({
+        ok: true,
+        demo: true,
+        data: {
+          titles: [
+            '쓰고나서 왜 이제 알았지 싶은 거ㅠㅠ',
+            '주변에서 다 물어보는 그거 맞아요ㅋㅋ',
+            '반신반의했다가 완전 팬됨ㄷㄷ',
+            '이거 없었으면 어떻게 살았을까',
+            '써보면 알아요, 말로 설명이 안 됨'
+          ],
+          description: sampleDesc,
+          hashtags: sampleTags
+        }
+      })
+    }
+
+    const res = await fetch('https://api.openai.com/v1/chat/completions', {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: 'gpt-4o',
+        temperature: 1.1,
+        messages: [
+          {
+            role: 'system',
+            content: '당신은 인스타그램 일상 감성 포스팅을 잘 쓰는 한국 크리에이터입니다. 좋은 걸 발견했을 때 친구에게 공유하듯, 진심 어린 따뜻함과 공감이 자연스럽게 묻어나는 글을 씁니다. 이모지와 느낌표·말줄임 등 감정 표현을 풍부하게 사용하되 억지스럽지 않게, 사람 사는 세상의 따뜻한 온기가 느껴지게 씁니다. 절대 사무적이거나 광고 말투를 사용하지 않습니다.'
+          },
+          { role: 'user', content: prompt }
+        ],
+        response_format: { type: 'json_object' }
+      })
+    })
+
+    if (!res.ok) {
+      const t = await res.text()
+      return c.json({ ok: false, error: 'OpenAI 오류: ' + t.substring(0, 200) }, 500)
+    }
+
+    const resJson = await res.json() as any
+    const raw = resJson.choices?.[0]?.message?.content || '{}'
+    let parsed: any = {}
+    try { parsed = JSON.parse(raw) } catch {}
+
+    // DB에 생성된 제목/설명 저장
+    const firstTitle = (parsed.titles || [])[0] || ''
+    await c.env.DB.prepare(`
+      UPDATE jobs SET youtube_title = ?, youtube_description = ?, updated_at = CURRENT_TIMESTAMP
+      WHERE job_id = ?
+    `).bind(firstTitle, parsed.description || '', job_id).run().catch(() => {})
+
+    return c.json({ ok: true, data: parsed })
   } catch (e: any) {
     return c.json({ ok: false, error: e.message }, 500)
   }

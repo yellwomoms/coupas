@@ -39,9 +39,9 @@ const App = {
     subtitleBgBar: true,          // 자막 배경 바
 
     // ── 자막 상세 설정 ─────────────────────────────────────
-    subtitleFont: 'NanumSquareRound',   // 폰트
-    subtitleFontSize: 36,               // 글자 크기
-    subtitlePosition: 'bottom',         // 위치: bottom|middle|top
+    subtitleFont: 'NanumSquareRound',
+    subtitleFontSize: 36,
+    subtitlePosition: 'middle',
     subtitleFontColor: '#FFFFFF',       // 글자 색
     subtitleBgColor: 'rgba(0,0,0,0.65)', // 배경 색
     subtitleBgOpacity: 0.65,            // 배경 불투명도
@@ -60,8 +60,8 @@ const App = {
     { value: 'BMJUA',                 label: '배민 주아체',           sample: '가나다ABC',  category: '배민' },
     { value: 'GmarketSansBold',       label: 'G마켓산스 Bold',        sample: '가나다ABC',  category: '고딕' },
     { value: 'NanumMyeongjo',         label: '나눔명조',              sample: '가나다ABC',  category: '명조' },
-    { value: 'Nanum Pen Script',        label: '나눔손글씨 펜',         sample: '가나다ABC',  category: '손글씨', handwriting: true },
-    { value: 'Nanum Brush Script',      label: '나눔손글씨 붓',         sample: '가나다ABC',  category: '손글씨', handwriting: true },
+    { value: 'Nanum Pen Script',        label: '나눔손글씨 다행체',     sample: '가나다ABC',  category: '손글씨', handwriting: true },
+    { value: 'Nanum Brush Script',      label: '나눔손글씨 맛있는체', sample: '가나다ABC',  category: '손글씨', handwriting: true },
     { value: 'sans-serif',            label: '기본 고딕 (시스템)',    sample: '가나다ABC',  category: '기본' }
   ],
 
@@ -86,27 +86,67 @@ const App = {
 
   // ── 초기화 ────────────────────────────────────────────────────
   async init() {
-    this.renderApp()
+    // 스켈레톤 로딩 화면 즉시 표시
+    this._showSkeletonLoader()
+    // 데이터 로드 → 완료 즉시 전체 렌더링
     await this.loadInitialData()
     this.bindEvents()
   },
 
+  _showSkeletonLoader() {
+    document.getElementById('app').innerHTML = `
+      <header class="header">
+        <div class="logo">
+          <i class="fas fa-robot" style="color:var(--accent-light)"></i>
+          <div><div class="logo-title">AI Studio</div><div class="logo-sub">페르소나 기반 쇼츠 자동생성 · Typecast TTS</div></div>
+        </div>
+      </header>
+      <div class="main-layout" style="display:flex;gap:1rem;padding:1rem">
+        <div style="flex:0 0 320px;display:flex;flex-direction:column;gap:0.75rem">
+          <!-- 스켈레톤: 페르소나 영역 -->
+          <div style="background:var(--bg-card);border:1px solid var(--border);border-radius:14px;padding:1.25rem">
+            <div style="font-size:0.78rem;font-weight:700;color:var(--text-muted);margin-bottom:0.75rem">페르소나 선택</div>
+            <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:0.5rem">
+              ${[1,2,3,4,5,6].map(() => `
+                <div style="height:72px;background:var(--bg-secondary);border-radius:10px;animation:skeleton-pulse 1.2s ease-in-out infinite"></div>
+              `).join('')}
+            </div>
+          </div>
+          <!-- 스켈레톤: 입력 영역 -->
+          <div style="background:var(--bg-card);border:1px solid var(--border);border-radius:14px;padding:1.25rem;display:flex;flex-direction:column;gap:0.6rem">
+            ${[1,2,3].map(() => `<div style="height:36px;background:var(--bg-secondary);border-radius:7px;animation:skeleton-pulse 1.2s ease-in-out infinite"></div>`).join('')}
+          </div>
+        </div>
+        <div style="flex:1;background:var(--bg-card);border:1px solid var(--border);border-radius:14px;padding:1.25rem;display:flex;align-items:center;justify-content:center">
+          <div style="text-align:center;color:var(--text-muted)">
+            <span class="spinner" style="width:24px;height:24px;display:inline-block;margin-bottom:0.75rem"></span>
+            <div style="font-size:0.82rem">데이터 로딩 중...</div>
+          </div>
+        </div>
+      </div>
+      <style>
+        @keyframes skeleton-pulse {
+          0%,100% { opacity:0.4 }
+          50% { opacity:0.9 }
+        }
+      </style>
+    `
+  },
+
   async loadInitialData() {
     try {
-      const [personasRes, presetsRes, voicesRes, settingsRes, jobsRes, prodPresetsRes] = await Promise.all([
-        axios.get('/api/personas'),
-        axios.get('/api/subtitle-presets'),
-        axios.get('/api/tts-voices'),
-        axios.get('/api/settings'),
-        axios.get('/api/jobs'),
-        axios.get('/api/production-presets')
-      ])
-      this.state.personas = personasRes.data.data || []
-      this.state.subtitlePresets = presetsRes.data.data || []
-      this.state.ttsVoices = voicesRes.data.data || []
-      this.state.settings = settingsRes.data.data || {}
-      this.state.jobs = jobsRes.data.data || []
-      this.state.productionPresets = prodPresetsRes.data.data || []
+      // 🚀 /api/init: jobs 제외한 핵심 설정만 빠르게 로드
+      const res = await axios.get('/api/init')
+      const d = res.data.data
+
+      this.state.personas          = d.personas          || []
+      this.state.subtitlePresets   = d.subtitlePresets   || []
+      this.state.ttsVoices         = d.ttsVoices         || []
+      this.state.settings          = d.settings          || {}
+      this.state.productionPresets = d.productionPresets || []
+      // jobs는 히스토리 탭 클릭 시 lazy load (초기 렌더링 속도 개선)
+      this.state.jobs = []
+      this.state._jobsLoaded = false
 
       // 기본값 세팅
       if (this.state.subtitlePresets.length > 0) {
@@ -140,6 +180,12 @@ const App = {
     const app = document.getElementById('app')
     app.innerHTML = this.getAppHTML()
     this.bindEvents()
+    // ── 자막 위치 select 강제 동기화 (middle 기본값 보장) ─────────
+    const pos = this.state.subtitlePosition || 'middle'
+    ;['subtitlePosition','subtitlePositionResynth','subtitlePositionNoTTS'].forEach(id => {
+      const el = document.getElementById(id)
+      if (el) el.value = pos
+    })
   },
 
   getAppHTML() {
@@ -308,35 +354,10 @@ const App = {
           </div>
         </section>
 
-        <!-- STEP 4: 자막 스타일 프리셋 -->
+        <!-- STEP 4: TTS 성우 + 감정 선택 + 미리듣기 → STEP 4로 통합 -->
         <section class="section">
           <div class="section-title">
             <span class="step-badge">4</span>
-            자막 스타일 프리셋
-          </div>
-          <div class="preset-list" id="subtitlePresetList">
-            ${subtitlePresets.map(p => `
-              <div class="preset-item ${form.subtitle_preset_id === p.id ? 'selected' : ''}"
-                data-preset-id="${p.id}">
-                <div class="preset-radio"></div>
-                <div class="preset-info">
-                  <div class="preset-name">${p.name}</div>
-                  <div class="preset-font-preview" style="font-family:'${p.font_family}',sans-serif">
-                    ${p.font_family} · ${p.layout === 'bottom_bar' ? '하단 바' : p.layout === 'bottom_center' ? '하단 중앙' : '중앙'}
-                  </div>
-                </div>
-                <div style="width:40px;height:22px;background:${p.bg_color};border-radius:3px;display:flex;align-items:center;justify-content:center;flex-shrink:0">
-                  <span style="font-size:8px;color:${p.font_color};font-weight:700">자막</span>
-                </div>
-              </div>
-            `).join('')}
-          </div>
-        </section>
-
-        <!-- STEP 5: TTS 성우 + 감정 선택 + 미리듣기 -->
-        <section class="section">
-          <div class="section-title">
-            <span class="step-badge">5</span>
             Typecast 성우 &amp; 감정 선택
             <span style="font-size:0.62rem;color:#a855f7;background:rgba(168,85,247,0.1);padding:0.15rem 0.4rem;border-radius:4px;margin-left:6px">TYPECAST</span>
           </div>
@@ -379,6 +400,29 @@ const App = {
             }).join('')}
           </div>
 
+          <!-- ── 속도 슬라이더: 성우 목록 바로 아래 (미리듣기에 즉시 반영) ── -->
+          <div style="margin-top:0.75rem;background:rgba(124,58,237,0.05);border:1px solid rgba(124,58,237,0.15);border-radius:10px;padding:0.65rem 0.85rem">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:0.35rem">
+              <span style="font-size:0.72rem;color:var(--text-muted)">
+                <i class="fas fa-tachometer-alt" style="margin-right:4px;color:#a78bfa"></i>
+                말하기 속도 <span style="font-size:0.63rem;color:#6b7280">(미리듣기·TTS 생성에 바로 반영)</span>
+              </span>
+              <span id="speedLabel" style="font-size:0.8rem;font-weight:700;color:var(--accent-light)">${form.tts_speed.toFixed(2)}×</span>
+            </div>
+            <div style="display:flex;align-items:center;gap:0.5rem">
+              <span style="font-size:0.63rem;color:var(--text-muted)">🐢 0.5×</span>
+              <input type="range" id="ttsSpeedSlider"
+                min="0.5" max="2.0" step="0.05" value="${form.tts_speed}"
+                style="flex:1;accent-color:#7c3aed;height:4px;cursor:pointer">
+              <span style="font-size:0.63rem;color:var(--text-muted)">🐇 2.0×</span>
+            </div>
+            <div style="display:flex;justify-content:space-between;font-size:0.62rem;color:var(--text-muted);margin-top:0.2rem">
+              <span>느리게 (명확하게)</span>
+              <span style="color:#a78bfa">현재: ${form.tts_speed.toFixed(2)}× — 미리듣기 버튼으로 바로 확인하세요</span>
+              <span>빠르게 (짧게)</span>
+            </div>
+          </div>
+
           <!-- 미리듣기 상태 바 -->
           <div id="voicePreviewBar" style="display:none;margin-top:0.6rem;background:rgba(124,58,237,0.08);border:1px solid rgba(124,58,237,0.2);border-radius:8px;padding:0.55rem 0.75rem">
             <div style="display:flex;align-items:center;gap:0.6rem">
@@ -408,25 +452,6 @@ const App = {
             `).join('')}
           </div>
 
-          <!-- TTS 속도 슬라이더 -->
-          <div style="margin-top:0.85rem">
-            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:0.35rem">
-              <span style="font-size:0.72rem;color:var(--text-muted)">TTS 생성 속도</span>
-              <span id="speedLabel" style="font-size:0.75rem;font-weight:700;color:var(--accent-light)">${form.tts_speed.toFixed(2)}×</span>
-            </div>
-            <div style="display:flex;align-items:center;gap:0.5rem">
-              <span style="font-size:0.65rem;color:var(--text-muted)">0.5×</span>
-              <input type="range" id="ttsSpeedSlider"
-                min="0.5" max="2.0" step="0.05" value="${form.tts_speed}"
-                style="flex:1;accent-color:#7c3aed;height:4px">
-              <span style="font-size:0.65rem;color:var(--text-muted)">2.0×</span>
-            </div>
-            <div style="display:flex;justify-content:space-between;font-size:0.63rem;color:var(--text-muted);margin-top:0.25rem">
-              <span>느리게 (명확)</span>
-              <span style="color:var(--accent-light)">${form.tts_speed.toFixed(2)}×</span>
-              <span>빠르게 (짧게)</span>
-            </div>
-          </div>
         </section>
 
         <!-- 생성 버튼 -->
@@ -454,27 +479,14 @@ const App = {
     return `
       <main class="right-panel">
 
-        <!-- 탭 네비게이션 -->
+        <!-- 탭 네비게이션 (단순화) -->
         <nav class="tab-nav">
           <button class="tab-btn ${activeTab === 'workspace' ? 'active' : ''}" data-tab="workspace">
             <i class="fas fa-magic"></i> 작업 공간
           </button>
-          <button class="tab-btn ${activeTab === 'history' ? 'active' : ''}" data-tab="history">
-            <i class="fas fa-history"></i> 히스토리
-            ${state.jobs.length > 0 ? `<span style="background:var(--accent);color:white;padding:0 5px;border-radius:10px;font-size:0.65rem">${state.jobs.length}</span>` : ''}
-          </button>
-          <button class="tab-btn ${activeTab === 'preview' ? 'active' : ''}" data-tab="preview">
-            <i class="fas fa-film"></i> 자막 미리보기
-          </button>
-          <button class="tab-btn ${activeTab === 'cost' ? 'active' : ''}" data-tab="cost">
-            <i class="fas fa-coins"></i> 비용 안내
-          </button>
         </nav>
 
-        ${activeTab === 'workspace' ? this.getWorkspaceTabHTML() : ''}
-        ${activeTab === 'history' ? this.getHistoryTabHTML() : ''}
-        ${activeTab === 'preview' ? this.getPreviewTabHTML() : ''}
-        ${activeTab === 'cost' ? this.getCostTabHTML() : ''}
+        ${this.getWorkspaceTabHTML()}
 
       </main>
     `
@@ -743,35 +755,153 @@ const App = {
         </div>
 
         ${hasVideo ? `
-          <!-- 완성된 영상 다운로드 -->
+          <!-- ✅ 완성된 영상 다운로드 -->
           <div style="background:rgba(16,185,129,0.05);border:1px solid rgba(16,185,129,0.2);border-radius:10px;padding:1rem;text-align:center;margin-bottom:0.75rem">
             <div style="font-size:2rem;margin-bottom:0.5rem">🎬</div>
             <div style="font-size:0.85rem;font-weight:700;color:#10b981;margin-bottom:0.3rem">자막 합성 영상 완성!</div>
             <div style="font-size:0.72rem;color:var(--text-muted);margin-bottom:0.75rem">TTS 음성 + 자막이 합성된 MP4 영상입니다</div>
-            <a href="${currentJob.output_video_url}" download="aistudio_output.mp4" 
+            <a href="${currentJob.output_video_url}" download="aistudio_output.mp4"
               style="display:inline-flex;align-items:center;gap:0.4rem;background:#10b981;color:white;padding:0.55rem 1.2rem;border-radius:8px;text-decoration:none;font-size:0.82rem;font-weight:700">
               <i class="fas fa-download"></i> MP4 다운로드
             </a>
           </div>
-          <button onclick="App.startVideoSynthesis()" class="btn-secondary" style="width:100%;justify-content:center">
-            <i class="fas fa-redo"></i> 다시 합성
-          </button>
+
+          <!-- 🔧 자막 설정 편집 후 재합성 (항상 표시) -->
+          <div style="background:var(--bg-secondary);border:1px solid var(--border);border-radius:10px;padding:0.85rem;margin-bottom:0.75rem">
+            <div style="font-size:0.78rem;font-weight:700;color:var(--text-primary);margin-bottom:0.65rem;display:flex;align-items:center;gap:0.4rem">
+              <i class="fas fa-sliders-h" style="color:#a78bfa"></i>
+              자막 설정 편집 &amp; 재합성
+              <span style="font-size:0.62rem;color:var(--text-muted);margin-left:4px">폰트·크기·위치·색 변경 후 다시 합성</span>
+            </div>
+
+            <!-- 폰트 선택 (가로 스크롤) -->
+            <div style="margin-bottom:0.55rem">
+              <label style="font-size:0.65rem;color:var(--text-muted);font-weight:600;display:block;margin-bottom:0.3rem">폰트</label>
+              <div style="display:flex;gap:0.3rem;flex-wrap:wrap">
+                ${this.fontOptions.map(f => `
+                  <div onclick="App.setSubtitleFont('${f.value}')"
+                    style="padding:0.3rem 0.55rem;border-radius:6px;cursor:pointer;border:1px solid ${state.subtitleFont===f.value?'#7c3aed':'var(--border)'};background:${state.subtitleFont===f.value?'rgba(124,58,237,0.15)':'var(--bg-card)'};white-space:nowrap;transition:all 0.15s">
+                    <div style="font-family:${f.value};font-size:0.75rem;color:${state.subtitleFont===f.value?'#a78bfa':'var(--text-secondary)'}">
+                      ${f.label}${f.handwriting?' ✍️':''}
+                    </div>
+                  </div>
+                `).join('')}
+              </div>
+            </div>
+
+            <!-- 크기 + 위치 -->
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:0.5rem;margin-bottom:0.55rem">
+              <div>
+                <label style="font-size:0.65rem;color:var(--text-muted);font-weight:600;display:block;margin-bottom:0.2rem">글자 크기</label>
+                <select id="subtitleFontSizeResynth" style="width:100%;background:var(--bg-card);border:1px solid var(--border);color:var(--text-primary);padding:0.3rem;border-radius:5px;font-size:0.72rem"
+                  onchange="App.state.subtitleFontSize=parseInt(this.value)">
+                  <option value="24" ${state.subtitleFontSize===24?'selected':''}>작게 (24px)</option>
+                  <option value="28" ${state.subtitleFontSize===28?'selected':''}>약간 작게 (28px)</option>
+                  <option value="36" ${(state.subtitleFontSize||36)===36?'selected':''}>보통 (36px)</option>
+                  <option value="42" ${state.subtitleFontSize===42?'selected':''}>크게 (42px)</option>
+                  <option value="48" ${state.subtitleFontSize===48?'selected':''}>매우 크게 (48px)</option>
+                  <option value="56" ${state.subtitleFontSize===56?'selected':''}>초대형 (56px)</option>
+                </select>
+              </div>
+              <div>
+                <label style="font-size:0.65rem;color:var(--text-muted);font-weight:600;display:block;margin-bottom:0.2rem">자막 위치</label>
+                <select id="subtitlePositionResynth" style="width:100%;background:var(--bg-card);border:1px solid var(--border);color:var(--text-primary);padding:0.3rem;border-radius:5px;font-size:0.72rem"
+                  onchange="App.state.subtitlePosition=this.value">
+                  <option value="middle" ${(state.subtitlePosition||'middle')==='middle'?'selected':''}>중앙 (기본)</option>
+                  <option value="top" ${state.subtitlePosition==='top'?'selected':''}>상단</option>
+                  <option value="bottom" ${state.subtitlePosition==='bottom'?'selected':''}>하단</option>
+                </select>
+              </div>
+            </div>
+
+            <!-- 글자 색 -->
+            <div style="margin-bottom:0.55rem">
+              <label style="font-size:0.65rem;color:var(--text-muted);font-weight:600;display:block;margin-bottom:0.25rem">글자 색</label>
+              <div style="display:flex;align-items:center;gap:0.35rem;flex-wrap:wrap">
+                ${['#FFFFFF','#FFFF00','#00FF99','#FF6B6B','#A78BFA','#FBBF24','#34D399','#F97316'].map(col=>`
+                  <div onclick="App.state.subtitleFontColor='${col}';App.state.subtitleColor='${col}'"
+                    style="width:22px;height:22px;background:${col};border-radius:4px;cursor:pointer;border:2px solid ${(state.subtitleFontColor||'#FFFFFF').toUpperCase()===col?'#7c3aed':'var(--border)'}"></div>
+                `).join('')}
+                <input type="color" value="${state.subtitleFontColor||'#ffffff'}"
+                  onchange="App.state.subtitleFontColor=this.value;App.state.subtitleColor=this.value"
+                  style="width:28px;height:22px;padding:1px;border:1px solid var(--border);border-radius:4px;cursor:pointer;background:transparent">
+              </div>
+            </div>
+
+            <!-- 배경바 + 불투명도 -->
+            <div style="margin-bottom:0.65rem;display:flex;align-items:center;gap:0.75rem;flex-wrap:wrap">
+              <label style="display:flex;align-items:center;gap:0.3rem;cursor:pointer;font-size:0.7rem;color:var(--text-secondary)">
+                <input type="checkbox" id="subtitleBgBarResynth" ${state.subtitleBgBar!==false?'checked':''}
+                  onchange="App.state.subtitleBgBar=this.checked"
+                  style="accent-color:#7c3aed;width:13px;height:13px">
+                배경 바
+              </label>
+              ${state.subtitleBgBar!==false ? `
+              <div style="display:flex;align-items:center;gap:0.3rem;flex:1">
+                ${[{l:'검정',c:'rgba(0,0,0,0.65)'},{l:'진검정',c:'rgba(0,0,0,0.85)'},{l:'보라',c:'rgba(124,58,237,0.7)'},{l:'흰색',c:'rgba(255,255,255,0.75)'}].map(bg=>`
+                  <div onclick="App.state.subtitleBgColor='${bg.c}'"
+                    title="${bg.l}"
+                    style="width:24px;height:15px;background:${bg.c};border:1px solid rgba(255,255,255,0.15);border-radius:3px;cursor:pointer;outline:${(state.subtitleBgColor||'rgba(0,0,0,0.65)')===bg.c?'2px solid #7c3aed':'none'}"></div>
+                `).join('')}
+                <input type="range" min="0" max="1" step="0.05" value="${state.subtitleBgOpacity||0.65}"
+                  style="flex:1;accent-color:#7c3aed;height:3px;min-width:50px"
+                  oninput="App.state.subtitleBgOpacity=parseFloat(this.value)">
+                <span style="font-size:0.62rem;color:#a78bfa;min-width:24px">${Math.round((state.subtitleBgOpacity||0.65)*100)}%</span>
+              </div>` : ''}
+            </div>
+
+            <!-- 원본 영상 교체 / 업로드 -->
+            <div style="margin-bottom:0.75rem;background:${state.bgVideoFile ? 'rgba(16,185,129,0.07)' : 'rgba(251,146,60,0.07)'};border:1px solid ${state.bgVideoFile ? 'rgba(16,185,129,0.25)' : 'rgba(251,146,60,0.3)'};border-radius:9px;padding:0.75rem">
+              <div style="font-size:0.75rem;font-weight:700;color:var(--text-primary);margin-bottom:0.5rem;display:flex;align-items:center;gap:0.4rem">
+                <i class="fas fa-video" style="color:#fb923c"></i>
+                원본 영상 업로드
+                ${state.bgVideoFile
+                  ? `<span style="font-size:0.62rem;color:#10b981;background:rgba(16,185,129,0.12);padding:0.12rem 0.4rem;border-radius:5px;border:1px solid rgba(16,185,129,0.3)">✅ 업로드됨</span>`
+                  : `<span style="font-size:0.62rem;color:#fbbf24;background:rgba(251,191,36,0.12);padding:0.12rem 0.4rem;border-radius:5px;border:1px solid rgba(251,191,36,0.3)">⚠ 미업로드 (그라데이션 배경)</span>`
+                }
+              </div>
+              <div style="font-size:0.68rem;color:var(--text-muted);margin-bottom:0.5rem;line-height:1.5">
+                ${state.bgVideoFile
+                  ? `<i class="fas fa-check-circle" style="color:#10b981"></i> <strong style="color:#10b981">${state.bgVideoFile.name}</strong> (${(state.bgVideoFile.size/1024/1024).toFixed(1)}MB) — 재합성 시 이 영상 위에 자막이 합성됩니다`
+                  : `도우인/샤오홍슈 원본 영상을 업로드하면 해당 영상 위에 자막이 합성됩니다.<br><span style="color:#fbbf24">⚠ 9:16 세로 영상 권장</span>`
+                }
+              </div>
+              <div style="display:flex;align-items:center;gap:0.4rem;flex-wrap:wrap">
+                <label for="bgVideoInput2" style="display:inline-flex;align-items:center;gap:0.3rem;background:${state.bgVideoFile ? 'rgba(251,146,60,0.85)' : 'var(--accent)'};color:white;padding:0.35rem 0.8rem;border-radius:7px;cursor:pointer;font-size:0.75rem;font-weight:600">
+                  <i class="fas fa-upload"></i> ${state.bgVideoFile ? '영상 교체' : '📁 영상 업로드'}
+                </label>
+                <input type="file" id="bgVideoInput2" accept="video/*" style="display:none" onchange="App.handleBgVideoUpload(event)">
+                ${state.bgVideoFile ? `<button onclick="App.clearBgVideo()" style="display:inline-flex;align-items:center;gap:0.25rem;background:rgba(239,68,68,0.1);color:#ef4444;border:1px solid rgba(239,68,68,0.2);padding:0.3rem 0.6rem;border-radius:7px;cursor:pointer;font-size:0.72rem"><i class="fas fa-times"></i> 제거</button>` : ''}
+              </div>
+            </div>
+
+            <!-- 재합성 버튼 -->
+            <button onclick="App.startVideoSynthesis()"
+              style="width:100%;padding:0.65rem;background:linear-gradient(135deg,#7c3aed,#a855f7);border:none;color:white;border-radius:8px;cursor:pointer;font-size:0.82rem;font-weight:700;display:flex;align-items:center;justify-content:center;gap:0.5rem">
+              <i class="fas fa-redo"></i> ${state.bgVideoFile ? '업로드된 영상 + 자막 재합성' : '자막 설정 적용 후 재합성'}
+            </button>
+          </div>
         ` : hasTTS ? `
           <!-- 합성 준비 완료 or 합성 중 -->
           ${isRendering ? `
             <div id="renderingProgress" style="background:rgba(251,146,60,0.05);border:1px solid rgba(251,146,60,0.2);border-radius:10px;padding:1rem">
               <div style="display:flex;align-items:center;gap:0.75rem;margin-bottom:0.75rem">
                 <span class="spinner" style="width:18px;height:18px;border-color:rgba(251,146,60,0.3);border-top-color:#fb923c"></span>
-                <div>
+                <div style="flex:1">
                   <div style="font-size:0.82rem;font-weight:700;color:#fb923c">자막 합성 렌더링 중...</div>
                   <div style="font-size:0.7rem;color:var(--text-muted)" id="renderStatusText">준비 중...</div>
                 </div>
-                <div style="margin-left:auto;font-size:0.85rem;font-weight:700;color:#fb923c" id="renderPct">0%</div>
+                <div style="font-size:0.85rem;font-weight:700;color:#fb923c" id="renderPct">0%</div>
               </div>
-              <div style="height:6px;background:var(--bg-secondary);border-radius:99px;overflow:hidden">
+              <div style="height:6px;background:var(--bg-secondary);border-radius:99px;overflow:hidden;margin-bottom:0.65rem">
                 <div id="renderProgressBar" style="height:100%;width:0%;background:linear-gradient(90deg,#f97316,#fb923c);border-radius:99px;transition:width 0.4s ease"></div>
               </div>
-              <div style="margin-top:0.6rem;font-size:0.68rem;color:var(--text-muted);text-align:center">브라우저에서 직접 렌더링 중 — 탭을 닫지 마세요</div>
+              <div style="display:flex;align-items:center;justify-content:space-between">
+                <div style="font-size:0.68rem;color:var(--text-muted)">브라우저에서 직접 렌더링 중 — 탭을 닫지 마세요</div>
+                <button onclick="App.cancelRendering()" style="display:inline-flex;align-items:center;gap:0.3rem;background:rgba(239,68,68,0.15);color:#ef4444;border:1px solid rgba(239,68,68,0.3);padding:0.3rem 0.7rem;border-radius:6px;cursor:pointer;font-size:0.72rem;font-weight:600">
+                  <i class="fas fa-stop"></i> 취소
+                </button>
+              </div>
             </div>
           ` : `
             <div style="padding:0.5rem 0">
@@ -880,9 +1010,9 @@ const App = {
                     <label style="font-size:0.68rem;color:var(--text-muted);font-weight:600">자막 위치</label>
                     <select id="subtitlePosition" style="width:100%;background:var(--bg-card);border:1px solid var(--border);color:var(--text-primary);padding:0.3rem;border-radius:5px;font-size:0.72rem;margin-top:0.2rem"
                       onchange="App.state.subtitlePosition=this.value">
-                      <option value="bottom" ${(state.subtitlePosition||'bottom')==='bottom'?'selected':''}>하단</option>
-                      <option value="middle" ${(state.subtitlePosition||'bottom')==='middle'?'selected':''}>중앙</option>
-                      <option value="top" ${(state.subtitlePosition||'bottom')==='top'?'selected':''}>상단</option>
+                      <option value="middle" ${(state.subtitlePosition||'middle')==='middle'?'selected':''}>중앙 (기본)</option>
+                      <option value="top" ${(state.subtitlePosition||'middle')==='top'?'selected':''}>상단</option>
+                      <option value="bottom" ${state.subtitlePosition==='bottom'?'selected':''}>하단</option>
                     </select>
                   </div>
                 </div>
@@ -942,7 +1072,7 @@ const App = {
                 </div>
 
                 <!-- 실시간 자막 미리보기 -->
-                <div style="background:#111;border-radius:8px;padding:0.75rem;position:relative;overflow:hidden;min-height:52px;display:flex;align-items:${(state.subtitlePosition||'bottom')==='top'?'flex-start':(state.subtitlePosition||'bottom')==='middle'?'center':'flex-end'};justify-content:center">
+                <div style="background:#111;border-radius:8px;padding:0.75rem;position:relative;overflow:hidden;min-height:52px;display:flex;align-items:${(state.subtitlePosition||'middle')==='top'?'flex-start':(state.subtitlePosition||'middle')==='middle'?'center':'flex-end'};justify-content:center">
                   <div style="padding:0.3rem 0.7rem;border-radius:5px;background:${state.subtitleBgBar!==false?(state.subtitleBgColor||'rgba(0,0,0,0.65)'):'transparent'};text-align:center;max-width:90%">
                     <span style="font-family:${state.subtitleFont||'NanumSquareRound'};font-size:${Math.round((state.subtitleFontSize||36)*0.55)}px;color:${state.subtitleFontColor||'#FFFFFF'};font-weight:bold;text-shadow:1px 1px 2px ${state.subtitleBgBar!==false?'transparent':'#000'};line-height:1.3">
                       자막 미리보기 텍스트 — ABC 가나다
@@ -961,14 +1091,82 @@ const App = {
             </div>
           `}
         ` : `
-          <!-- TTS 없음 -->
-          <div style="text-align:center;padding:1.25rem;color:var(--text-muted);font-size:0.82rem">
-            <div style="font-size:2rem;margin-bottom:0.5rem;opacity:0.3">🎬</div>
-            <div>TTS 음성을 먼저 생성해주세요</div>
-            <div style="font-size:0.72rem;margin-top:0.3rem">대본 생성 → TTS 생성 → 영상 합성 순서로 진행합니다</div>
+          <!-- TTS 없음 — 영상만 업로드해 자막 재합성 가능 -->
+          <div style="padding:0.5rem 0">
+            <div style="background:rgba(251,146,60,0.06);border:1px solid rgba(251,146,60,0.18);border-radius:8px;padding:0.75rem;margin-bottom:0.85rem">
+              <div style="font-size:0.75rem;font-weight:700;color:#fb923c;margin-bottom:0.3rem;display:flex;align-items:center;gap:0.4rem">
+                <i class="fas fa-info-circle"></i> 다운로드 영상 재합성
+              </div>
+              <div style="font-size:0.7rem;color:var(--text-muted);line-height:1.6">
+                이전에 생성한 영상이 마음에 들지 않으면,<br>
+                영상 파일을 업로드하고 <strong style="color:var(--text-primary)">자막 설정을 바꿔</strong> 다시 합성할 수 있습니다.<br>
+                TTS 없이도 업로드된 영상 위에 자막만 입힐 수 있어요.
+              </div>
+            </div>
+
+            <!-- 영상 업로드 -->
+            <div style="background:var(--bg-secondary);border:1px solid var(--border);border-radius:10px;padding:0.85rem;margin-bottom:0.85rem">
+              <div style="font-size:0.78rem;font-weight:700;color:var(--text-primary);margin-bottom:0.5rem;display:flex;align-items:center;gap:0.4rem">
+                <i class="fas fa-video" style="color:#fb923c"></i>
+                영상 업로드 (선택사항)
+                ${state.bgVideoFile ? `<span style="font-size:0.65rem;color:#10b981;background:rgba(16,185,129,0.1);padding:0.15rem 0.4rem;border-radius:6px;border:1px solid rgba(16,185,129,0.3)">✅ ${state.bgVideoFile.name}</span>` : '<span style="font-size:0.65rem;color:var(--text-muted)">미선택 시 그라데이션 배경 사용</span>'}
+              </div>
+              <div style="display:flex;align-items:center;gap:0.5rem;flex-wrap:wrap">
+                <label for="bgVideoInputNoTTS" style="display:inline-flex;align-items:center;gap:0.35rem;background:var(--accent);color:white;padding:0.4rem 0.9rem;border-radius:7px;cursor:pointer;font-size:0.78rem;font-weight:600">
+                  <i class="fas fa-upload"></i> ${state.bgVideoFile ? '영상 교체' : '영상 업로드'}
+                </label>
+                <input type="file" id="bgVideoInputNoTTS" accept="video/*" style="display:none" onchange="App.handleBgVideoUpload(event)">
+                ${state.bgVideoFile ? `
+                <button onclick="App.clearBgVideo()" style="display:inline-flex;align-items:center;gap:0.3rem;background:rgba(239,68,68,0.15);color:#ef4444;border:1px solid rgba(239,68,68,0.3);padding:0.4rem 0.7rem;border-radius:7px;cursor:pointer;font-size:0.75rem">
+                  <i class="fas fa-times"></i> 제거
+                </button>
+                ` : ''}
+              </div>
+              ${state.bgVideoFile ? `<div style="margin-top:0.5rem;font-size:0.68rem;color:#10b981"><i class="fas fa-check-circle"></i> ${state.bgVideoFile.name} (${(state.bgVideoFile.size/1024/1024).toFixed(1)}MB)</div>` : ''}
+            </div>
+
+            <!-- 자막 설정 (간략) -->
+            <div style="background:var(--bg-secondary);border:1px solid var(--border);border-radius:10px;padding:0.85rem;margin-bottom:0.85rem">
+              <div style="font-size:0.75rem;font-weight:700;color:var(--text-primary);margin-bottom:0.5rem;display:flex;align-items:center;gap:0.4rem">
+                <i class="fas fa-closed-captioning" style="color:var(--accent-light)"></i> 자막 설정
+              </div>
+              <div style="display:grid;grid-template-columns:1fr 1fr;gap:0.5rem;margin-bottom:0.5rem">
+                <div>
+                  <label style="font-size:0.65rem;color:var(--text-muted);display:block;margin-bottom:0.2rem">글자 크기</label>
+                  <select id="subtitleFontSizeNoTTS" style="width:100%;background:var(--bg-card);border:1px solid var(--border);color:var(--text-primary);padding:0.3rem;border-radius:5px;font-size:0.72rem"
+                    onchange="App.state.subtitleFontSize=parseInt(this.value)">
+                    <option value="24" ${(state.subtitleFontSize||36)===24?'selected':''}>작게 (24px)</option>
+                    <option value="36" ${(state.subtitleFontSize||36)===36?'selected':''}>보통 (36px)</option>
+                    <option value="42" ${(state.subtitleFontSize||36)===42?'selected':''}>크게 (42px)</option>
+                    <option value="48" ${(state.subtitleFontSize||36)===48?'selected':''}>매우 크게 (48px)</option>
+                  </select>
+                </div>
+                <div>
+                  <label style="font-size:0.65rem;color:var(--text-muted);display:block;margin-bottom:0.2rem">자막 위치</label>
+                  <select id="subtitlePositionNoTTS" style="width:100%;background:var(--bg-card);border:1px solid var(--border);color:var(--text-primary);padding:0.3rem;border-radius:5px;font-size:0.72rem"
+                    onchange="App.state.subtitlePosition=this.value">
+                    <option value="middle" ${(state.subtitlePosition||'middle')==='middle'?'selected':''}>중앙 (기본)</option>
+                    <option value="top" ${(state.subtitlePosition||'middle')==='top'?'selected':''}>상단</option>
+                    <option value="bottom" ${state.subtitlePosition==='bottom'?'selected':''}>하단</option>
+                  </select>
+                </div>
+              </div>
+            </div>
+
+            <div style="font-size:0.72rem;color:var(--text-muted);margin-bottom:0.5rem;text-align:center">
+              <i class="fas fa-exclamation-triangle" style="color:#fbbf24;margin-right:4px"></i>
+              TTS 없이 합성 시 영상에 오디오가 없습니다. TTS를 먼저 생성하는 것을 권장합니다.
+            </div>
+
+            <button onclick="App.startVideoSynthesisNoTTS()" class="btn-generate" style="font-size:0.82rem;padding:0.65rem 1.2rem;background:linear-gradient(135deg,#fb923c,#f97316)">
+              <i class="fas fa-film"></i> 자막만 합성 (TTS 없이)
+            </button>
           </div>
         `}
       </div>
+
+      <!-- YouTube/SNS 제목 & 설명글 (워크스페이스 하단 인라인) -->
+      ${hasScript ? this._getYoutubeSectionHTML() : ''}
 
       <!-- 숨겨진 캔버스 (렌더링용) -->
       <canvas id="synthCanvas" style="display:none"></canvas>
@@ -976,7 +1174,20 @@ const App = {
   },
 
   getHistoryTabHTML() {
-    const { jobs, personas } = this.state
+    const { jobs, _jobsLoaded } = this.state
+
+    // jobs가 아직 로드되지 않았으면 로딩 스피너 표시 + 자동 로드 트리거
+    if (!_jobsLoaded) {
+      // 렌더링 후 자동으로 jobs 로드 (setTimeout으로 렌더링 완료 후 실행)
+      setTimeout(() => App.refreshJobs(), 0)
+      return `
+        <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;padding:3rem;gap:1rem">
+          <div class="spinner" style="width:28px;height:28px"></div>
+          <div style="color:var(--text-muted);font-size:0.82rem">히스토리 불러오는 중...</div>
+        </div>
+      `
+    }
+
     return `
       <div>
         ${jobs.length === 0 ? `
@@ -1345,9 +1556,38 @@ const App = {
         // 히스토리 갱신
         const jobsRes = await axios.get('/api/jobs')
         this.state.jobs = jobsRes.data.data || []
+        this.state._jobsLoaded = true
 
         this.showToast('대본이 생성되었습니다! ✨', 'success')
         this.state.activeTab = 'workspace'
+        this.state.isGeneratingTitle = true  // 유튜브 제목 생성 중 표시
+        this.rerender()
+
+        // ── 백그라운드 유튜브 제목/설명 자동 생성 (논블로킹) ──────
+        const jobIdForTitle = res.data.data.job_id
+        const prodNum = form.product_number || ''
+        setTimeout(async () => {
+          try {
+            const titleRes = await axios.post(`/api/jobs/${jobIdForTitle}/generate-title`, {
+              product_number: prodNum
+            })
+            if (titleRes.data.ok) {
+              if (this.state.currentJob?.job_id === jobIdForTitle) {
+                const d = titleRes.data.data
+                this.state.currentJob.youtube_titles      = d.titles || []
+                this.state.currentJob.youtube_description = d.description || ''
+                this.state.currentJob.youtube_hashtags    = d.hashtags || []
+                if (!titleRes.data.demo) {
+                  this.showToast('🎯 제목 & 설명글 자동 생성 완료!', 'success')
+                }
+              }
+            }
+          } catch(e) { /* 백그라운드 실패는 무시 */ } finally {
+            this.state.isGeneratingTitle = false
+            this.rerender()
+          }
+        }, 500)
+
       } else {
         this.showToast(res.data.error || '생성 실패', 'error')
       }
@@ -1369,6 +1609,22 @@ const App = {
         this.state.currentJob.script_content = res.data.data.script
         this.showToast(`버전 ${res.data.data.version} 대본 생성 완료!`, 'success')
         this.rerender()
+        // 재생성 시에도 제목 백그라운드 재생성
+        const jid = this.state.currentJob.job_id
+        setTimeout(async () => {
+          try {
+            const tr = await axios.post(`/api/jobs/${jid}/generate-title`, {
+              product_number: this.state.form.product_number || ''
+            })
+            if (tr.data.ok && this.state.currentJob?.job_id === jid) {
+              const d = tr.data.data
+              this.state.currentJob.youtube_titles      = d.titles || []
+              this.state.currentJob.youtube_description = d.description || ''
+              this.state.currentJob.youtube_hashtags    = d.hashtags || []
+              this.rerender()
+            }
+          } catch(e) {}
+        }, 300)
       }
     } catch (e) {
       this.showToast('재생성 실패: ' + e.message, 'error')
@@ -1492,7 +1748,12 @@ const App = {
     } catch (e) {
       if (bar) bar.style.display = 'none'
       if (icon) icon.className = 'fas fa-play'
-      this.showToast('미리듣기 오류: ' + (e.response?.data?.error || e.message), 'error')
+      const msg = e.message || ''
+      // worker 재시작 오류 → 사용자 친화적 메시지
+      const displayMsg = (msg.includes('restarted') || msg.includes('try again'))
+        ? '서버가 재시작되었습니다. 다시 시도해주세요.'
+        : (msg || '미리듣기 실패')
+      this.showToast('미리듣기 오류: ' + displayMsg, 'error')
     }
   },
 
@@ -1594,7 +1855,11 @@ const App = {
       if (icon) icon.className = 'fas fa-play'
       if (btn)  btn.disabled = false
       this.state._workspacePreviewPlaying = false
-      this.showToast('미리듣기 오류: ' + (e.response?.data?.error || e.message), 'error')
+      const msg = e.message || ''
+      const displayMsg = (msg.includes('restarted') || msg.includes('try again'))
+        ? '서버가 재시작되었습니다. 다시 시도해주세요.'
+        : (msg || '미리듣기 실패')
+      this.showToast('미리듣기 오류: ' + displayMsg, 'error')
     }
   },
 
@@ -1643,13 +1908,71 @@ const App = {
 
   clearBgVideo() {
     this.state.bgVideoFile = null
-    const input = document.getElementById('bgVideoInput')
-    if (input) input.value = ''
+    // 모든 영상 input 초기화 (bgVideoInput, bgVideoInput2, bgVideoInputNoTTS)
+    ;['bgVideoInput','bgVideoInput2','bgVideoInputNoTTS'].forEach(id => {
+      const el = document.getElementById(id)
+      if (el) el.value = ''
+    })
     this.showToast('원본 영상이 제거되었습니다.', 'info')
     this.rerender()
   },
 
   // ── 영상 합성 (Canvas + MediaRecorder) ───────────────────────
+  _renderCancelFlag: false,
+
+  cancelRendering() {
+    this._renderCancelFlag = true
+    this.showToast('렌더링 취소 중...', 'info')
+  },
+
+  // ── 원본 영상 없이 TTS만으로 합성 시 확인 팝업 ─────────────────
+  _confirmNoVideoSynthesis() {
+    return new Promise((resolve) => {
+      // 기존 모달 제거
+      const existing = document.getElementById('noVideoConfirmModal')
+      if (existing) existing.remove()
+
+      const modal = document.createElement('div')
+      modal.id = 'noVideoConfirmModal'
+      modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.75);z-index:9999;display:flex;align-items:center;justify-content:center;padding:1rem'
+      modal.innerHTML = `
+        <div style="background:#1a1035;border:1px solid rgba(124,58,237,0.4);border-radius:16px;padding:1.5rem;max-width:340px;width:100%;box-shadow:0 20px 60px rgba(0,0,0,0.6)">
+          <div style="font-size:2rem;text-align:center;margin-bottom:0.75rem">⚠️</div>
+          <div style="font-size:0.95rem;font-weight:700;color:#f8f8f8;text-align:center;margin-bottom:0.5rem">원본 영상이 없습니다</div>
+          <div style="font-size:0.78rem;color:#a0a0b8;text-align:center;line-height:1.6;margin-bottom:1.25rem">
+            원본 영상 없이 합성하면<br>
+            <strong style="color:#fbbf24">TTS 음성만 있는 그라데이션 배경 영상</strong>이 생성됩니다.<br><br>
+            원본 영상(도우인/샤오홍슈 등)을 업로드하면<br>
+            해당 영상 위에 자막이 합성됩니다.
+          </div>
+          <div style="display:flex;gap:0.6rem">
+            <button id="noVideoCancel" style="flex:1;padding:0.65rem;background:rgba(239,68,68,0.15);color:#ef4444;border:1px solid rgba(239,68,68,0.3);border-radius:8px;cursor:pointer;font-size:0.82rem;font-weight:600">
+              ✕ 취소 (영상 업로드)
+            </button>
+            <button id="noVideoContinue" style="flex:1;padding:0.65rem;background:linear-gradient(135deg,#7c3aed,#a855f7);color:white;border:none;border-radius:8px;cursor:pointer;font-size:0.82rem;font-weight:600">
+              그대로 합성
+            </button>
+          </div>
+        </div>
+      `
+      document.body.appendChild(modal)
+
+      document.getElementById('noVideoCancel').onclick = () => {
+        modal.remove()
+        resolve(false)
+      }
+      document.getElementById('noVideoContinue').onclick = () => {
+        modal.remove()
+        resolve(true)
+      }
+      // 배경 클릭 시 취소
+      modal.addEventListener('click', (e) => {
+        if (e.target === modal) { modal.remove(); resolve(false) }
+      })
+    })
+  },
+
+
   async startVideoSynthesis() {
     if (!this.state.currentJob?.tts_audio_url) {
       this.showToast('TTS 음성을 먼저 생성해주세요.', 'error'); return
@@ -1658,6 +1981,16 @@ const App = {
       this.showToast('대본이 없습니다.', 'error'); return
     }
 
+    // ── 원본 영상 없이 합성 시도 시 확인 팝업 ─────────────────────
+    if (!this.state.bgVideoFile) {
+      const confirmed = await this._confirmNoVideoSynthesis()
+      if (!confirmed) {
+        this.showToast('합성이 취소되었습니다. 원본 영상을 업로드해주세요.', 'info')
+        return
+      }
+    }
+
+    this._renderCancelFlag = false
     this.state.isRendering = true
     this.rerender()
 
@@ -1670,8 +2003,12 @@ const App = {
 
     try {
       const videoUrl = await this._renderSubtitleVideo()
+      if (this._renderCancelFlag) {
+        this.showToast('렌더링이 취소되었습니다.', 'info')
+        return
+      }
       this.state.currentJob.output_video_url = videoUrl
-      this.state.currentJob._videoIsMP4 = true  // mp4 변환 완료 플래그
+      this.state.currentJob._videoIsMP4 = !videoUrl.includes('.webm')
       this.state.currentJob.stage = 'complete'
       this.state.currentJob.status = 'complete'
 
@@ -1682,11 +2019,17 @@ const App = {
         })
       } catch(e) {}
 
+      const isWebm = videoUrl.startsWith('blob:') ? false : videoUrl.includes('.webm')
       this.showToast('🎬 영상 합성 완료! 다운로드 버튼을 클릭하세요.', 'success')
     } catch(e) {
-      this.showToast('렌더링 오류: ' + e.message, 'error')
-      console.error(e)
+      if (this._renderCancelFlag) {
+        this.showToast('렌더링이 취소되었습니다.', 'info')
+      } else {
+        this.showToast('렌더링 오류: ' + e.message, 'error')
+        console.error(e)
+      }
     } finally {
+      this._renderCancelFlag = false
       this.state.isRendering = false
       this.rerender()
     }
@@ -1703,7 +2046,7 @@ const App = {
     const positionEl = document.getElementById('subtitlePosition')
     const bgBarEl    = document.getElementById('subtitleBgBar')
     const fontSize   = parseInt(fontSizeEl?.value || this.state.subtitleFontSize || '36')
-    const position   = positionEl?.value || this.state.subtitlePosition || 'bottom'
+    const position   = positionEl?.value || this.state.subtitlePosition || 'middle'
     const fontColor  = this.state.subtitleFontColor || this.state.subtitleColor || '#ffffff'
     const hasBgBar   = bgBarEl ? bgBarEl.checked : (this.state.subtitleBgBar !== false)
     const fontFamily = this.state.subtitleFont || 'NanumSquareRound'
@@ -1737,8 +2080,10 @@ const App = {
     const duration = audio.duration || 20
 
     // ── 자막 세그먼트 생성 ────────────────────────────────────────
-    // 대본을 의미 단위로 분리하고 자동 줄바꿈 처리
-    const segments = this._buildSubtitleSegments(script, duration, ctx, fontSize, W)
+    // TTS 생성 시 앞에 '음. ' 패딩이 붙어 실제 대본 발화가 약 0.6초 후 시작
+    // → subtitleOffset으로 자막 타이밍을 TTS 음성에 싱크 맞춤
+    const TTS_PADDING_OFFSET = 0.6  // '음. ' 발화 시간 (초)
+    const segments = this._buildSubtitleSegments(script, duration, ctx, fontSize, W, TTS_PADDING_OFFSET)
 
     // ── MediaRecorder (webm 녹화) ─────────────────────────────
     const stream   = canvas.captureStream(30)
@@ -1779,6 +2124,13 @@ const App = {
     const startTime = performance.now()
 
     const drawFrame = () => {
+      if (this._renderCancelFlag) {
+        cancelAnimationFrame(animFrame)
+        recorder.stop()
+        audio.pause()
+        try { audioCtx.close() } catch(e) {}
+        return
+      }
       const elapsed = (performance.now() - startTime) / 1000
       const pct     = Math.min(elapsed / duration * 100 * 0.6, 60)
       setProgress(pct, `렌더링 중... ${elapsed.toFixed(1)}s / ${duration.toFixed(1)}s`)
@@ -1847,8 +2199,10 @@ const App = {
       const { fetchFile } = window.FFmpegUtil || {}
 
       if (!FFmpeg || !fetchFile) {
-        setProgress(100, '완료! (webm)')
-        return URL.createObjectURL(webmBlob)
+        setProgress(100, '완료! (webm 컨테이너)')
+        this.showToast('✅ 영상 완성! (다운 후 .mp4 확장자로 저장됩니다)', 'info')
+        const mp4CompatBlob = new Blob([webmBlob], { type: 'video/mp4' })
+        return URL.createObjectURL(mp4CompatBlob)
       }
 
       const ffmpeg = new FFmpeg()
@@ -1879,9 +2233,12 @@ const App = {
 
     } catch (err) {
       console.error('FFmpeg 변환 실패:', err)
-      setProgress(100, '완료 (webm 형식)')
-      this.showToast('MP4 변환 실패 — webm으로 저장됩니다', 'error')
-      return URL.createObjectURL(webmBlob)
+      // webm을 mp4 확장자 blob으로 감싸서 반환 (브라우저에서 재생 가능)
+      setProgress(100, '완료! (webm 컨테이너)')
+      this.showToast('✅ 영상 완성! (webm 형식 — 다운 후 .mp4로 저장됩니다)', 'info')
+      // Blob을 mp4 타입으로 재생성해서 반환
+      const mp4CompatBlob = new Blob([webmBlob], { type: 'video/mp4' })
+      return URL.createObjectURL(mp4CompatBlob)
     }
   },
 
@@ -1902,8 +2259,8 @@ const App = {
 
   // ── 자막 세그먼트 빌더 ────────────────────────────────────────
   // 대본 → 의미 단위 분리 → 최대 너비 기준 줄바꿈 → 타임코드 할당
-  // 개선: 한 줄당 최대 16자 기준 자동 줄바꿈, 2줄 초과 시 다음 세그먼트로 분리
-  _buildSubtitleSegments(script, duration, ctx, fontSize, canvasW) {
+  // 한 줄당 최대 14자, 한 번에 1줄만 표시 (이탈 방지)
+  _buildSubtitleSegments(script, duration, ctx, fontSize, canvasW, subtitleOffset = 0) {
     // 1) 대본을 의미 단위로 분리
     const raw = script.trim()
     let chunks = []
@@ -1922,50 +2279,80 @@ const App = {
 
     // 2) 캔버스 폰트 설정 (줄바꿈 측정용)
     const SAFE_W = canvasW - 120   // 양옆 60px 안전 마진 (모바일 크롭 방지)
-    const MAX_LINE_CHARS = 16      // 한 줄 최대 글자 수 (16자 기준)
+    const MAX_LINE_CHARS = 14      // ★ 한 줄 최대 14자 (이탈 방지)
     ctx.font = `bold ${fontSize}px 'Apple SD Gothic Neo','Noto Sans KR',sans-serif`
 
-    // 픽셀 너비 기반 줄바꿈 (한국어/영문 혼용 대응)
+    // ★ 어절(띄어쓰기) 단위로 끊기 — 단어 중간 절대 자르지 않음
+    // 규칙: 어절을 하나씩 추가하다가 14자 초과 또는 픽셀 너비 초과 시 이전 어절까지를 한 줄로 확정
     const wrapTextByWidth = (text) => {
+      const words = text.split(' ')   // 어절 분리
       const lines = []
       let cur = ''
-      for (const ch of text) {
-        const test = cur + ch
-        if (ctx.measureText(test).width > SAFE_W && cur.length > 0) {
+
+      for (const word of words) {
+        if (!word) continue
+        const candidate = cur ? cur + ' ' + word : word
+
+        // 14자 초과 OR 픽셀 너비 초과 → 현재 줄 확정 후 새 줄 시작
+        // ★ 글자 수는 공백 포함 길이로 계산 (어절 중간에 끊지 않음)
+        if (cur && (candidate.length > MAX_LINE_CHARS || ctx.measureText(candidate).width > SAFE_W)) {
           lines.push(cur)
-          cur = ch
+          cur = word
         } else {
-          cur = test
+          cur = candidate
         }
       }
       if (cur) lines.push(cur)
-      return lines
+
+      // 어절 자체가 MAX_LINE_CHARS 초과인 경우(긴 단어) 글자 단위로 보조 분리
+      const result = []
+      for (const line of lines) {
+        if (line.length <= MAX_LINE_CHARS && ctx.measureText(line).width <= SAFE_W) {
+          result.push(line)
+        } else {
+          // 불가피한 경우만 글자 단위 분리 (합성어·외래어 등)
+          let tmp = ''
+          for (const ch of line) {
+            const test = tmp + ch
+            if ((test.replace(/\s/g, '').length > MAX_LINE_CHARS || ctx.measureText(test).width > SAFE_W) && tmp.length > 0) {
+              result.push(tmp)
+              tmp = ch
+            } else {
+              tmp = test
+            }
+          }
+          if (tmp) result.push(tmp)
+        }
+      }
+      return result.length > 0 ? result : [text]
     }
 
-    // 3) 각 청크를 줄 단위로 분해 후 최대 2줄씩 세그먼트로 묶기
-    //    → 화면에 동시에 보이는 자막은 최대 2줄
-    const MAX_LINES_PER_SEG = 2
+    // 3) 각 청크를 줄 단위로 분해 후 1줄씩 세그먼트로 묶기
+    //    → 화면에 동시에 보이는 자막은 ★ 최대 1줄 (집중도·가독성 최우선)
+    const MAX_LINES_PER_SEG = 1
     let allLineGroups = []
     for (const chunk of chunks) {
       const wrappedLines = wrapTextByWidth(chunk)
-      // 2줄씩 그룹화
+      // 1줄씩 그룹화
       for (let i = 0; i < wrappedLines.length; i += MAX_LINES_PER_SEG) {
         allLineGroups.push({
           lines: wrappedLines.slice(i, i + MAX_LINES_PER_SEG),
-          charCount: wrappedLines.slice(i, i + MAX_LINES_PER_SEG).join('').length
+          charCount: wrappedLines.slice(i, i + MAX_LINES_PER_SEG).join('').replace(/\s/g, '').length
         })
       }
     }
-    if (allLineGroups.length === 0) allLineGroups = [{ lines: [raw], charCount: raw.length }]
+    if (allLineGroups.length === 0) allLineGroups = [{ lines: [raw.substring(0, MAX_LINE_CHARS)], charCount: Math.min(raw.length, MAX_LINE_CHARS) }]
 
     // 4) 타임코드 할당 (글자수 비례 + 최소 노출 시간 0.8초 보장)
+    // subtitleOffset: TTS 패딩('음. ') 발화 시간만큼 자막 시작을 뒤로 밀어 싱크 맞춤
+    const usableDuration = Math.max(duration - subtitleOffset, duration * 0.9)
     const totalChars = allLineGroups.reduce((s, g) => s + g.charCount, 0) || 1
     const MIN_SEG_DUR = 0.8   // 최소 0.8초 노출
     const segments = []
-    let elapsed = 0
+    let elapsed = subtitleOffset  // 패딩 시간만큼 오프셋 적용
 
     for (const group of allLineGroups) {
-      const rawDur = (group.charCount / totalChars) * duration
+      const rawDur = (group.charCount / totalChars) * usableDuration
       const segDur = Math.max(MIN_SEG_DUR, rawDur)
       segments.push({
         lines: group.lines,
@@ -1995,10 +2382,13 @@ const App = {
   _drawSubtitle(ctx, lines, W, H, fontSize, fontColor, hasBgBar, position, fontFamily, bgColor) {
     if (!lines || lines.length === 0) return
 
+    // ★ 1줄만 표시 (이탈 방지 - 14자 이내 단줄 자막)
+    const displayLines = lines.slice(0, 1)
+
     const lineH  = Math.round(fontSize * 1.4)  // 줄 간격 (여유롭게)
     const padX   = 28                           // 좌우 패딩
     const padY   = 10                           // 상하 패딩
-    const totalH = lines.length * lineH + padY  // 전체 자막 블록 높이
+    const totalH = displayLines.length * lineH + padY  // 전체 자막 블록 높이
 
     // ── 위치 결정 (안전 마진 포함) ──────────────────────────────────
     // 모바일/쇼츠: 하단 150px은 플랫폼 UI 영역, 상단 120px은 상태바+아이콘
@@ -2012,7 +2402,7 @@ const App = {
 
     // 가장 넓은 줄의 픽셀 너비 측정
     let maxTw = 0
-    for (const line of lines) {
+    for (const line of displayLines) {
       const tw = ctx.measureText(line).width
       if (tw > maxTw) maxTw = tw
     }
@@ -2027,7 +2417,7 @@ const App = {
       baseY = Math.round(H / 2 - totalH / 2 + fontSize)
     } else {
       // bottom: 가장 아래 줄이 SAFE_BOTTOM 위에 위치
-      baseY = H - SAFE_BOTTOM - (lines.length - 1) * lineH
+      baseY = H - SAFE_BOTTOM - (displayLines.length - 1) * lineH
     }
 
     // ── 배경 박스 (줄 전체를 감싸는 단일 박스) ──────────────────────
@@ -2046,8 +2436,8 @@ const App = {
     }
 
     // ── 각 줄 텍스트 ────────────────────────────────────────────────
-    for (let i = 0; i < lines.length; i++) {
-      const line = lines[i]
+    for (let i = 0; i < displayLines.length; i++) {
+      const line = displayLines[i]
       const y    = baseY + i * lineH
 
       // 외곽선 (배경 바 없을 때 가독성 확보)
@@ -2127,6 +2517,7 @@ const App = {
     try {
       const res = await axios.get('/api/jobs')
       this.state.jobs = res.data.data || []
+      this.state._jobsLoaded = true
       this.rerender()
     } catch (e) {}
   },
@@ -2150,6 +2541,17 @@ const App = {
       .replace(/</g, '&lt;')
       .replace(/>/g, '&gt;')
       .replace(/"/g, '&quot;')
+  },
+
+  // \n을 <br>로 변환 (인스타 캡션 줄바꿈 표시용)
+  escHtmlWithBr(str) {
+    if (!str) return ''
+    return String(str)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/\n/g, '<br>')
   },
 
   getStatusLabel(status) {
@@ -2205,7 +2607,9 @@ const App = {
     // 자막 설정 적용
     if (p.subtitle_font)       this.state.subtitleFont       = p.subtitle_font
     if (p.subtitle_font_size)  this.state.subtitleFontSize   = p.subtitle_font_size
-    if (p.subtitle_position)   this.state.subtitlePosition   = p.subtitle_position
+    // subtitle_position: 프리셋에 'bottom'이 저장되어 있어도 'middle'로 교정
+    const rawPos = p.subtitle_position || this.state.subtitlePosition || 'middle'
+    this.state.subtitlePosition = rawPos === 'bottom' ? 'middle' : rawPos
     if (p.subtitle_font_color) {
       this.state.subtitleFontColor = p.subtitle_font_color
       this.state.subtitleColor     = p.subtitle_font_color
@@ -2266,7 +2670,7 @@ const App = {
         <div style="background:var(--bg-secondary);border:1px solid var(--border);border-radius:8px;padding:0.75rem;margin-bottom:1rem;font-size:0.72rem;color:var(--text-secondary);line-height:1.8">
           <div style="font-size:0.68rem;color:var(--text-muted);font-weight:600;margin-bottom:0.4rem">📋 저장될 설정</div>
           <div>🔤 폰트: <strong style="color:var(--text-primary)">${state.subtitleFont || 'NanumSquareRound'}</strong></div>
-          <div>📏 크기/위치: <strong style="color:var(--text-primary)">${state.subtitleFontSize || 36}px · ${state.subtitlePosition || 'bottom'}</strong></div>
+          <div>📏 크기/위치: <strong style="color:var(--text-primary)">${state.subtitleFontSize || 36}px · ${state.subtitlePosition || 'middle'}</strong></div>
           <div>🎨 글자/배경: <span style="background:${state.subtitleFontColor||'#fff'};color:${state.subtitleFontColor==='#FFFFFF'||state.subtitleFontColor==='#ffffff'?'#333':'#fff'};padding:1px 6px;border-radius:3px;font-size:0.65rem">${state.subtitleFontColor||'#FFFFFF'}</span>
             · ${state.subtitleBgBar!==false?'배경바 ON':'배경바 OFF'}</div>
           <div>🎙 성우: <strong style="color:var(--text-primary)">${voiceName || '기본'}</strong></div>
@@ -2310,7 +2714,7 @@ const App = {
         description: descEl?.value?.trim() || '',
         subtitle_font:        state.subtitleFont || 'NanumSquareRound',
         subtitle_font_size:   state.subtitleFontSize || 36,
-        subtitle_position:    state.subtitlePosition || 'bottom',
+        subtitle_position:    state.subtitlePosition || 'middle',
         subtitle_font_color:  state.subtitleFontColor || '#FFFFFF',
         subtitle_bg_color:    state.subtitleBgColor || 'rgba(0,0,0,0.65)',
         subtitle_bg_opacity:  state.subtitleBgOpacity ?? 0.65,
@@ -2353,6 +2757,294 @@ const App = {
     } catch (e) {
       this.showToast('삭제 실패: ' + e.message, 'error')
     }
+  },
+
+  // ── TTS 없이 영상합성 (자막만) ────────────────────────────────
+  async startVideoSynthesisNoTTS() {
+    if (!this.state.currentJob?.script_content) {
+      this.showToast('대본이 없습니다.', 'error'); return
+    }
+
+    // 임시로 silent TTS URL을 null로 설정하지 않고 기존 로직 재활용
+    // bgVideoFile이 없으면 그라데이션 배경 사용
+    if (!this.state.bgVideoFile) {
+      if (!confirm('원본 영상이 없습니다. 그라데이션 배경으로 자막만 합성할까요?')) return
+    }
+
+    // 오디오 없이 영상합성 — silent audio 생성
+    this.state.isRendering = true
+    this.rerender()
+
+    try {
+      const videoUrl = await this._renderSubtitleVideoNoAudio()
+      this.state.currentJob.output_video_url = videoUrl
+      this.state.currentJob._videoIsMP4 = true
+      this.state.currentJob.stage = 'complete'
+      this.state.currentJob.status = 'complete'
+      this.showToast('🎬 자막 합성 완료! 다운로드 버튼을 클릭하세요.', 'success')
+    } catch(e) {
+      this.showToast('렌더링 오류: ' + e.message, 'error')
+      console.error(e)
+    } finally {
+      this.state.isRendering = false
+      this.rerender()
+    }
+  },
+
+  // ── 내부: 오디오 없이 자막만 Canvas 합성 ─────────────────────
+  async _renderSubtitleVideoNoAudio() {
+    const job    = this.state.currentJob
+    const script = job.script_content || ''
+
+    const fontSizeEl = document.getElementById('subtitleFontSizeNoTTS') || document.getElementById('subtitleFontSize')
+    const positionEl = document.getElementById('subtitlePositionNoTTS') || document.getElementById('subtitlePosition')
+    const bgBarEl    = document.getElementById('subtitleBgBar')
+    const fontSize   = parseInt(fontSizeEl?.value || this.state.subtitleFontSize || '36')
+    const position   = positionEl?.value || this.state.subtitlePosition || 'middle'
+    const fontColor  = this.state.subtitleFontColor || '#ffffff'
+    const hasBgBar   = bgBarEl ? bgBarEl.checked : (this.state.subtitleBgBar !== false)
+    const fontFamily = this.state.subtitleFont || 'NanumSquareRound'
+    const bgColor    = hasBgBar ? (this.state.subtitleBgColor || 'rgba(0,0,0,0.65)') : 'transparent'
+
+    const W = 720, H = 1280
+    const canvas = document.getElementById('synthCanvas')
+    canvas.width = W; canvas.height = H
+    const ctx = canvas.getContext('2d')
+
+    const bgVideo = this.state.bgVideoFile ? await this._loadBgVideo(this.state.bgVideoFile) : null
+    const hasBgVideo = !!bgVideo
+
+    // 무음 영상 총 길이 = 자막 세그먼트 기준 (약 20초 기본)
+    const estimatedDuration = Math.max(15, Math.round(script.length / 5))
+    const segments = this._buildSubtitleSegments(script, estimatedDuration, ctx, fontSize, W)
+
+    const stream = canvas.captureStream(30)
+    const mimeType = MediaRecorder.isTypeSupported('video/webm;codecs=vp9')
+      ? 'video/webm;codecs=vp9' : 'video/webm'
+    const recorder = new MediaRecorder(stream, { mimeType, videoBitsPerSecond: 4000000 })
+    const chunks = []
+    recorder.ondataavailable = e => { if (e.data.size > 0) chunks.push(e.data) }
+
+    const setProgress = (pct, msg) => {
+      const bar = document.getElementById('renderProgressBar')
+      const pctEl = document.getElementById('renderPct')
+      const txt = document.getElementById('renderStatusText')
+      if (bar)   bar.style.width = pct + '%'
+      if (pctEl) pctEl.textContent = Math.round(pct) + '%'
+      if (txt)   txt.textContent = msg || ''
+    }
+
+    recorder.start(100)
+    setProgress(5, '영상 렌더링 시작...')
+
+    const startTime = performance.now()
+    let animFrame
+
+    await new Promise(resolve => {
+      const drawFrame = () => {
+        const elapsed = (performance.now() - startTime) / 1000
+        const pct = Math.min(elapsed / estimatedDuration * 90, 90)
+        setProgress(pct, `렌더링 중... ${elapsed.toFixed(1)}s / ${estimatedDuration}s`)
+
+        if (hasBgVideo) {
+          const vw = bgVideo.videoWidth || W, vh = bgVideo.videoHeight || H
+          const scale = Math.max(W / vw, H / vh)
+          ctx.drawImage(bgVideo, (W - vw * scale) / 2, (H - vh * scale) / 2, vw * scale, vh * scale)
+        } else {
+          const grad = ctx.createLinearGradient(0, 0, 0, H)
+          grad.addColorStop(0, '#0d0820'); grad.addColorStop(0.5, '#160c30'); grad.addColorStop(1, '#0d0820')
+          ctx.fillStyle = grad; ctx.fillRect(0, 0, W, H)
+          for (let i = 0; i < 36; i++) {
+            const x = (W / 36) * i + W / 72
+            const h = 18 + Math.sin(elapsed * 2.5 + i * 0.55) * 14
+            ctx.fillStyle = `rgba(124,58,237,${0.12 + Math.sin(elapsed + i) * 0.08})`
+            ctx.fillRect(x - 3, H / 2 - h / 2, 6, h)
+          }
+        }
+
+        const seg = segments.find(s => elapsed >= s.start && elapsed < s.end)
+        if (seg) this._drawSubtitle(ctx, seg.lines, W, H, fontSize, fontColor, hasBgBar, position, fontFamily, bgColor)
+
+        if (elapsed < estimatedDuration + 0.2) {
+          animFrame = requestAnimationFrame(drawFrame)
+        } else {
+          resolve(null)
+        }
+      }
+      animFrame = requestAnimationFrame(drawFrame)
+    })
+
+    cancelAnimationFrame(animFrame)
+    recorder.stop()
+    await new Promise(res => { recorder.onstop = () => res(null) })
+    setProgress(95, 'webm 완성...')
+
+    const webmBlob = new Blob(chunks, { type: mimeType })
+    setProgress(100, '✅ 완성!')
+    return URL.createObjectURL(webmBlob)
+  },
+
+  // ── YouTube/SNS 섹션 HTML (워크스페이스 인라인용) ────────────
+  _getYoutubeSectionHTML() {
+    const { currentJob, form } = this.state
+    const titles   = currentJob?.youtube_titles || []
+    const desc     = currentJob?.youtube_description || ''
+    const hashtags = currentJob?.youtube_hashtags || []
+    const isGen    = this.state.isGeneratingTitle || false
+
+    return `
+      <div style="background:var(--bg-card);border:1px solid var(--border);border-radius:14px;padding:1.25rem;margin-bottom:1.25rem">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:0.85rem">
+          <div style="font-size:0.82rem;font-weight:700;color:var(--text-primary);display:flex;align-items:center;gap:0.5rem">
+            <i class="fab fa-youtube" style="color:#ff0000"></i>
+            YouTube · SNS 제목 &amp; 설명글
+          </div>
+          <div style="display:flex;align-items:center;gap:0.4rem">
+            <input type="text" id="ytProductNumberInline" value="${this.escHtml(form.product_number)}"
+              placeholder="제품번호 (선택)"
+              style="width:100px;background:var(--bg-secondary);border:1px solid var(--border);color:var(--text-primary);padding:0.25rem 0.5rem;border-radius:5px;font-size:0.7rem"
+              oninput="App.state.form.product_number=this.value">
+            <button onclick="App.generateYoutubeTitle()" ${isGen?'disabled':''}
+              style="display:inline-flex;align-items:center;gap:0.3rem;padding:0.3rem 0.75rem;background:linear-gradient(135deg,#ff0000,#cc0000);border:none;color:white;border-radius:6px;cursor:pointer;font-size:0.72rem;font-weight:700;white-space:nowrap">
+              ${isGen ? `<span class="spinner" style="width:11px;height:11px;border-color:rgba(255,255,255,0.3);border-top-color:white"></span>`
+                      : `<i class="fas fa-magic"></i>`}
+              ${isGen ? '생성 중...' : '제목 생성'}
+            </button>
+          </div>
+        </div>
+
+        ${isGen ? `
+          <div style="display:flex;align-items:center;gap:0.5rem;padding:0.75rem;background:rgba(255,0,0,0.05);border:1px solid rgba(255,0,0,0.1);border-radius:8px;margin-bottom:0.5rem">
+            <span class="spinner" style="width:14px;height:14px;border-color:rgba(255,0,0,0.2);border-top-color:#ff6666;flex-shrink:0"></span>
+            <span style="font-size:0.75rem;color:#ff9999">YouTube 제목 & 설명글 자동 생성 중...</span>
+          </div>
+        ` : ''}
+        ${titles.length > 0 ? `
+          <!-- 제목 후보 5개 -->
+          <div style="margin-bottom:0.75rem">
+            <div style="font-size:0.68rem;color:var(--text-muted);font-weight:600;margin-bottom:0.35rem;display:flex;align-items:center;justify-content:space-between">
+              <span><i class="fas fa-heading" style="margin-right:3px;color:#ff6666"></i>후킹 제목 후보</span>
+              <button onclick="App.copyAllTitles()" style="background:none;border:none;color:#ff6666;cursor:pointer;font-size:0.65rem;padding:0"><i class="fas fa-copy"></i> 전체복사</button>
+            </div>
+            <div style="display:flex;flex-direction:column;gap:0.3rem">
+              ${titles.map((t, i) => `
+                <div style="display:flex;align-items:center;gap:0.4rem;padding:0.45rem 0.65rem;background:var(--bg-secondary);border:1px solid var(--border);border-radius:7px">
+                  <span style="width:16px;height:16px;background:rgba(255,0,0,0.1);border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:0.58rem;color:#ff6666;flex-shrink:0;font-weight:700">${i+1}</span>
+                  <span style="flex:1;font-size:0.75rem;color:var(--text-primary)">${this.escHtml(t)}</span>
+                  <button onclick="App.copyText('${this.escHtml(t).replace(/'/g,"\\'")}','제목')"
+                    style="background:none;border:none;color:var(--text-muted);cursor:pointer;padding:0.1rem 0.25rem;font-size:0.68rem;flex-shrink:0"><i class="fas fa-copy"></i></button>
+                </div>
+              `).join('')}
+            </div>
+          </div>
+
+          <!-- 설명글 -->
+          ${desc ? `
+          <div style="margin-bottom:0.65rem">
+            <div style="font-size:0.68rem;color:var(--text-muted);font-weight:600;margin-bottom:0.3rem;display:flex;align-items:center;justify-content:space-between">
+              <span><i class="fas fa-instagram" style="margin-right:3px;color:#e1306c"></i>인스타그램 캡션 <span style="color:#10b981;font-size:0.62rem">(YouTube·인스타·틱톡 공용 · 편집 가능)</span></span>
+              <button onclick="App.copyText(document.getElementById('descContentInline').innerText,'설명글')"
+                style="background:none;border:none;color:#a78bfa;cursor:pointer;font-size:0.65rem;padding:0"><i class="fas fa-copy"></i> 복사</button>
+            </div>
+            <div id="descContentInline" contenteditable="true"
+              style="background:var(--bg-secondary);border:1px solid rgba(225,48,108,0.25);border-radius:7px;padding:0.75rem;font-size:0.78rem;color:var(--text-primary);line-height:1.9;min-height:120px;outline:none;max-height:400px;overflow-y:auto;word-break:break-word;font-family:inherit"
+              oninput="App.state.currentJob.youtube_description=this.innerText">${this.escHtmlWithBr(desc)}</div>
+          </div>` : ''}
+
+          <!-- 해시태그 -->
+          ${hashtags.length > 0 ? `
+          <div>
+            <div style="font-size:0.68rem;color:var(--text-muted);font-weight:600;margin-bottom:0.3rem;display:flex;align-items:center;justify-content:space-between">
+              <span><i class="fas fa-hashtag" style="margin-right:3px;color:#60a5fa"></i>해시태그</span>
+              <button onclick="App.copyText('${this.escHtml(hashtags.join(' '))}','해시태그')"
+                style="background:none;border:none;color:#60a5fa;cursor:pointer;font-size:0.65rem;padding:0"><i class="fas fa-copy"></i> 복사</button>
+            </div>
+            <div style="display:flex;flex-wrap:wrap;gap:0.25rem">
+              ${hashtags.map(h=>`<span onclick="App.copyText('${this.escHtml(h)}','해시태그')" style="background:rgba(96,165,250,0.08);border:1px solid rgba(96,165,250,0.2);color:#93c5fd;padding:0.15rem 0.5rem;border-radius:99px;font-size:0.68rem;cursor:pointer">${this.escHtml(h)}</span>`).join('')}
+            </div>
+          </div>` : ''}
+        ` : `
+          <div style="text-align:center;padding:0.75rem;color:var(--text-muted);font-size:0.78rem;opacity:0.7">
+            <i class="fab fa-youtube" style="font-size:1.5rem;display:block;margin-bottom:0.35rem;opacity:0.3"></i>
+            위 버튼을 클릭해 제목 5개 + SNS 설명글을 자동 생성하세요
+          </div>
+        `}
+      </div>
+    `
+  },
+
+  // ── YouTube/SNS 탭 HTML (레거시 — 워크스페이스 인라인으로 대체) ─
+  // ── YouTube/SNS 탭 HTML ────────────────────────────────────────
+  getYoutubeTabHTML() {
+    return `<div>${this._getYoutubeSectionHTML()}</div>`
+  },
+
+
+  // ── YouTube 제목 생성 ──────────────────────────────────────────
+  async generateYoutubeTitle() {
+    if (!this.state.currentJob?.job_id) {
+      this.showToast('먼저 대본을 생성해주세요.', 'error'); return
+    }
+    this.state.isGeneratingTitle = true
+    this.rerender()
+
+    try {
+      const res = await axios.post(`/api/jobs/${this.state.currentJob.job_id}/generate-title`, {
+        product_number: this.state.form.product_number || ''
+      })
+      if (res.data.ok) {
+        const d = res.data.data
+        this.state.currentJob.youtube_titles      = d.titles || []
+        this.state.currentJob.youtube_description = d.description || ''
+        this.state.currentJob.youtube_hashtags    = d.hashtags || []
+        if (res.data.demo) {
+          this.showToast('📝 샘플 제목이 생성되었습니다. (OpenAI 키 없음)', 'info')
+        } else {
+          this.showToast('🎯 제목 &amp; 설명글 생성 완료!', 'success')
+        }
+      } else {
+        this.showToast(res.data.error || '생성 실패', 'error')
+      }
+    } catch (e) {
+      this.showToast('생성 오류: ' + (e.response?.data?.error || e.message), 'error')
+    } finally {
+      this.state.isGeneratingTitle = false
+      this.rerender()
+    }
+  },
+
+  selectTitle(idx) {
+    const titles = this.state.currentJob?.youtube_titles || []
+    if (!titles[idx]) return
+    // 선택된 제목 하이라이트
+    document.querySelectorAll('[id^="titleItem_"]').forEach((el, i) => {
+      if (i === idx) {
+        el.style.background = 'rgba(255,0,0,0.08)'
+        el.style.borderColor = 'rgba(255,0,0,0.3)'
+      } else {
+        el.style.background = 'var(--bg-secondary)'
+        el.style.borderColor = 'var(--border)'
+      }
+    })
+    navigator.clipboard.writeText(titles[idx]).then(() => {
+      this.showToast(`✅ 제목 복사됨: "${titles[idx].substring(0,20)}..."`, 'success')
+    })
+  },
+
+  copyAllTitles() {
+    const titles = this.state.currentJob?.youtube_titles || []
+    if (!titles.length) return
+    const text = titles.map((t, i) => `${i+1}. ${t}`).join('\n')
+    navigator.clipboard.writeText(text).then(() => {
+      this.showToast('✅ 제목 5개 모두 복사됨!', 'success')
+    })
+  },
+
+  copyText(text, label) {
+    if (!text) return
+    navigator.clipboard.writeText(text).then(() => {
+      this.showToast(`✅ ${label || '텍스트'} 복사됨!`, 'success')
+    })
   }
 }
 
