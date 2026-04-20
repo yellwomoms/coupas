@@ -30,9 +30,13 @@ const App = {
     currentJob: null,
     isGenerating: false,
     isGeneratingTTS: false,
-    activeTab: 'workspace', // workspace | history
+    isRendering: false,           // 영상 렌더링 중
+    activeTab: 'workspace',       // workspace | history | preview
     editingScript: false,
-    currentAudio: null
+    currentAudio: null,
+    playbackSpeed: 1.0,           // 오디오 재생 속도
+    subtitleColor: '#ffffff',     // 자막 글자색
+    subtitleBgBar: true           // 자막 배경 바
   },
 
   // ── Typecast 감정 옵션 ─────────────────────────────────────────
@@ -416,72 +420,76 @@ const App = {
   getWorkspaceTabHTML() {
     const currentJob = this.state.currentJob
     const settings = this.state.settings || {}
-    const isGeneratingTTS = this.state.isGeneratingTTS
     const state = this.state
 
     // 스테이지 계산
     const stage = currentJob?.stage || 'waiting'
     const stages = [
-      { key: 'waiting', icon: '⏳', label: '대기' },
-      { key: 'script_done', icon: '📝', label: '대본' },
-      { key: 'tts_done', icon: '🔊', label: 'TTS' },
-      { key: 'rendering', icon: '🎬', label: '렌더링' },
-      { key: 'complete', icon: '✅', label: '완료' }
+      { key: 'waiting',     icon: '⏳', label: '대기',    pct: 0   },
+      { key: 'script_done', icon: '📝', label: '대본',    pct: 25  },
+      { key: 'tts_done',    icon: '🔊', label: 'TTS',     pct: 55  },
+      { key: 'rendering',   icon: '🎬', label: '렌더링',  pct: 80  },
+      { key: 'complete',    icon: '✅', label: '완료',    pct: 100 }
     ]
-    const stageIdx = stages.findIndex(s => s.key === stage)
+    const stageIdx  = stages.findIndex(s => s.key === stage)
+    const progress  = stages[stageIdx]?.pct ?? 0
 
-    const hasScript = currentJob?.script_content
-    const hasTTS = currentJob?.tts_audio_url
+    const hasScript = !!currentJob?.script_content
+    const hasTTS    = !!currentJob?.tts_audio_url
+    const hasVideo  = !!currentJob?.output_video_url
     const charCount = hasScript ? currentJob.script_content.length : 0
+    const isRendering = state.isRendering || false
 
     return `
-      <!-- n8n 상태 -->
-      ${state.settings.has_n8n ? `
-        <div class="n8n-status">
-          <div class="n8n-dot ${currentJob ? 'processing' : 'connected'}"></div>
-          <div style="flex:1">
-            <div style="font-size:0.78rem;font-weight:600">n8n 워크플로우</div>
-            <div style="font-size:0.7rem;color:var(--text-muted)">
-              ${currentJob ? `처리 중: ${currentJob.job_id}` : '연결됨 - 대기 중'}
-            </div>
+      <!-- ━━ 전체 진행 상황 카드 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ -->
+      <div style="background:var(--bg-card);border:1px solid var(--border);border-radius:14px;padding:1.25rem;margin-bottom:1.25rem">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:1rem">
+          <div style="font-size:0.82rem;font-weight:700;color:var(--text-primary);display:flex;align-items:center;gap:0.5rem">
+            <i class="fas fa-tasks" style="color:var(--accent-light)"></i>
+            워크플로우 진행 상황
           </div>
-          <a href="#" style="font-size:0.72rem;color:var(--accent-light)">대시보드 열기 →</a>
-        </div>
-      ` : `
-        <div class="api-alert" style="margin-bottom:1rem">
-          <i class="fas fa-info-circle"></i>
-          <div>
-            <strong>데모 모드</strong><br>
-            API 키 없이도 샘플 대본 생성이 가능합니다.
-            실제 AI 대본 생성은 OpenAI API 키가 필요합니다.
+          <div style="font-size:0.78rem;font-weight:700;color:${progress===100?'#10b981':'var(--accent-light)'}">
+            ${progress}%
           </div>
         </div>
-      `}
 
-      <!-- 스테이지 뷰어 -->
-      <div class="stage-viewer">
-        <div class="stage-title">
-          <i class="fas fa-tasks" style="color:var(--accent-light)"></i>
-          워크플로우 진행 상황
+        <!-- 진행 바 -->
+        <div style="height:6px;background:var(--bg-secondary);border-radius:99px;overflow:hidden;margin-bottom:1rem">
+          <div style="height:100%;width:${progress}%;background:${progress===100?'#10b981':'linear-gradient(90deg,#7c3aed,#a855f7)'};border-radius:99px;transition:width 0.6s ease"></div>
         </div>
-        <div class="stage-steps">
+
+        <!-- 단계 스텝 -->
+        <div style="display:grid;grid-template-columns:repeat(5,1fr);gap:0.25rem">
           ${stages.map((s, i) => {
-            let cls = ''
-            if (i < stageIdx) cls = 'done'
-            else if (i === stageIdx) cls = 'active'
+            const done   = i < stageIdx
+            const active = i === stageIdx
             return `
-              <div class="stage-step ${cls}">
-                <div class="step-circle">
-                  ${i < stageIdx ? '<i class="fas fa-check" style="font-size:0.7rem"></i>' : s.icon}
+              <div style="display:flex;flex-direction:column;align-items:center;gap:0.3rem">
+                <div style="
+                  width:34px;height:34px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:0.85rem;
+                  background:${done?'#10b981':active?'rgba(124,58,237,0.25)':'var(--bg-secondary)'};
+                  border:2px solid ${done?'#10b981':active?'#7c3aed':'var(--border)'};
+                  transition:all 0.3s
+                ">
+                  ${done ? '<i class="fas fa-check" style="color:white;font-size:0.7rem"></i>' : s.icon}
                 </div>
-                <div class="step-label">${s.label}</div>
+                <div style="font-size:0.62rem;color:${done?'#10b981':active?'var(--accent-light)':'var(--text-muted)'};font-weight:${active?700:400};text-align:center">${s.label}</div>
               </div>
             `
           }).join('')}
         </div>
+
+        ${currentJob ? `
+          <div style="margin-top:0.75rem;display:flex;align-items:center;gap:0.5rem;flex-wrap:wrap">
+            <code style="font-size:0.68rem;color:var(--text-muted);background:var(--bg-secondary);padding:0.2rem 0.5rem;border-radius:4px">${currentJob.job_id}</code>
+            ${hasScript?`<span style="font-size:0.65rem;padding:0.15rem 0.4rem;border-radius:10px;background:rgba(16,185,129,0.15);color:#10b981;border:1px solid rgba(16,185,129,0.3)">✓ 대본</span>`:''}
+            ${hasTTS?`<span style="font-size:0.65rem;padding:0.15rem 0.4rem;border-radius:10px;background:rgba(124,58,237,0.15);color:#a78bfa;border:1px solid rgba(124,58,237,0.3)">✓ TTS</span>`:''}
+            ${hasVideo?`<span style="font-size:0.65rem;padding:0.15rem 0.4rem;border-radius:10px;background:rgba(251,146,60,0.15);color:#fb923c;border:1px solid rgba(251,146,60,0.3)">✓ 영상</span>`:''}
+          </div>
+        ` : `<div style="margin-top:0.75rem;font-size:0.75rem;color:var(--text-muted);text-align:center">좌측에서 URL·페르소나를 입력하고 대본 생성을 시작하세요</div>`}
       </div>
 
-      <!-- 대본 뷰어 -->
+      <!-- ━━ 대본 뷰어 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ -->
       <div class="script-viewer">
         <div class="script-viewer-header">
           <div class="script-viewer-title">
@@ -490,33 +498,24 @@ const App = {
           </div>
           <div class="script-actions">
             ${hasScript ? `
-              <button class="btn-secondary" id="btnEditScript">
-                <i class="fas fa-edit"></i> 수정
-              </button>
-              <button class="btn-secondary" id="btnRegenScript">
-                <i class="fas fa-redo"></i> 재생성
-              </button>
-              <button class="btn-secondary" id="btnCopyScript">
-                <i class="fas fa-copy"></i> 복사
-              </button>
+              <button class="btn-secondary" id="btnEditScript"><i class="fas fa-edit"></i> 수정</button>
+              <button class="btn-secondary" id="btnRegenScript"><i class="fas fa-redo"></i> 재생성</button>
+              <button class="btn-secondary" id="btnCopyScript"><i class="fas fa-copy"></i> 복사</button>
             ` : ''}
           </div>
         </div>
-
-        <div class="script-content ${state.editingScript ? 'editable' : ''}"
-          id="scriptContent"
-          ${state.editingScript ? 'contenteditable="true"' : ''}
-        >
+        <div class="script-content ${state.editingScript ? 'editable' : ''}" id="scriptContent"
+          ${state.editingScript ? 'contenteditable="true"' : ''}>
           ${hasScript
             ? this.escHtml(currentJob.script_content)
             : '<span class="script-placeholder">좌측에서 페르소나와 URL을 입력하고 AI 대본 생성하기를 클릭하세요.\n\n3초 후킹 → 공감 → 해결 경험 → 효과 → CTA 구조로 자동 생성됩니다.</span>'}
         </div>
         ${hasScript ? `
           <div class="script-char-count">
-            <span style="color:${charCount > 120 ? '#f59e0b' : 'var(--text-muted)'}">
-              ${charCount}자 / 권장 70~120자
+            <span style="color:${charCount > 130 ? '#f59e0b' : 'var(--text-muted)'}">
+              ${charCount}자 / 권장 70~130자
             </span>
-            ${charCount > 120 ? `<span style="color:#f59e0b;margin-left:0.5rem"><i class="fas fa-exclamation-triangle"></i> 너무 길 수 있어요</span>` : ''}
+            ${charCount > 130 ? `<span style="color:#f59e0b;margin-left:0.5rem"><i class="fas fa-exclamation-triangle"></i> 조금 길 수 있어요</span>` : ''}
             ${state.editingScript ? `
               <button class="btn-accent" id="btnSaveScript" style="margin-left:0.75rem;font-size:0.72rem;padding:0.2rem 0.5rem">
                 <i class="fas fa-save"></i> 저장
@@ -526,117 +525,220 @@ const App = {
         ` : ''}
       </div>
 
-      <!-- TTS 생성 섹션 -->
+      <!-- ━━ TTS 음성 생성 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ -->
       <div class="tts-player">
-        <div class="script-viewer-header" style="margin-bottom:1rem">
+        <div class="script-viewer-header" style="margin-bottom:0.85rem">
           <div class="script-viewer-title">
             <i class="fas fa-microphone" style="color:var(--accent-light)"></i>
             TTS 음성 생성
+            <span style="font-size:0.62rem;color:#a855f7;background:rgba(168,85,247,0.1);padding:0.12rem 0.35rem;border-radius:4px;margin-left:4px">TYPECAST</span>
           </div>
-          ${hasScript && !hasTTS ? `
-            <div style="display:flex;align-items:center;gap:0.5rem;flex-wrap:wrap">
-              <span style="font-size:0.68rem;color:#a78bfa;background:rgba(167,139,250,0.1);padding:0.2rem 0.45rem;border-radius:4px;border:1px solid rgba(167,139,250,0.2)">
-                ${this.emotionOptions.find(e => e.value === state.form.tts_emotion)?.label || state.form.tts_emotion}
-              </span>
-              <span style="font-size:0.68rem;color:#34d399;background:rgba(52,211,153,0.1);padding:0.2rem 0.45rem;border-radius:4px;border:1px solid rgba(52,211,153,0.2)">
-                ${state.form.tts_speed.toFixed(2)}×
-              </span>
-              <button class="btn-accent" id="btnGenerateTTS" ${state.isGeneratingTTS ? 'disabled' : ''}>
-                ${state.isGeneratingTTS
-                  ? '<span class="spinner" style="width:14px;height:14px;border-width:2px"></span> 생성 중...'
-                  : '<i class="fas fa-play-circle"></i> Typecast TTS 생성'}
-              </button>
-            </div>
+          ${hasScript && !state.isGeneratingTTS ? `
+            <button class="btn-accent" id="btnGenerateTTS" style="font-size:0.78rem;padding:0.4rem 0.9rem">
+              ${hasTTS
+                ? '<i class="fas fa-redo"></i> 재생성'
+                : '<i class="fas fa-play-circle"></i> TTS 생성'}
+            </button>
+          ` : state.isGeneratingTTS ? `
+            <button class="btn-accent" disabled style="font-size:0.78rem;padding:0.4rem 0.9rem;opacity:0.7">
+              <span class="spinner" style="width:12px;height:12px;border-width:2px"></span> 생성 중...
+            </button>
           ` : ''}
         </div>
 
         ${!settings.has_typecast && hasScript ? `
-          <div class="api-alert">
+          <div class="api-alert" style="margin-bottom:0.75rem">
             <i class="fas fa-microphone-slash"></i>
             <div>
-              <strong>Typecast API 키가 필요합니다.</strong><br>
-              <code style="font-size:0.68rem;color:#fcd34d">npx wrangler pages secret put TYPECAST_API_KEY</code><br>
-              <span style="font-size:0.72rem">지금은 브라우저 내장 TTS로 미리 들어보세요.</span>
-              <br><button onclick="App.browserTTS()" style="background:none;border:none;color:#fcd34d;cursor:pointer;font-size:0.78rem;padding:0;margin-top:0.3rem">
-                <i class="fas fa-volume-up"></i> 브라우저 TTS로 듣기
+              <strong>Typecast API 키 필요</strong>
+              <span style="font-size:0.72rem"> — 지금은 브라우저 TTS로 미리 들을 수 있어요.</span>
+              <button onclick="App.browserTTS()" style="background:none;border:none;color:#fcd34d;cursor:pointer;font-size:0.78rem;padding:0;margin-left:0.5rem">
+                <i class="fas fa-volume-up"></i> 듣기
               </button>
             </div>
           </div>
         ` : ''}
 
         ${hasTTS ? `
-          <div class="audio-player">
+          <!-- 오디오 플레이어 -->
+          <div class="audio-player" style="margin-bottom:0.75rem">
             <button class="play-btn" id="playTTSBtn" onclick="App.toggleAudio()">
               <i class="fas fa-play" id="playIcon"></i>
             </button>
             <div class="audio-waveform" id="audioWaveform">
-              ${Array.from({length: 16}, (_, i) => `<div class="wave-bar" style="height:${20 + Math.random()*60}%"></div>`).join('')}
+              ${Array.from({length:20}, () => `<div class="wave-bar" style="height:${15+Math.random()*70}%"></div>`).join('')}
             </div>
-            <span style="font-size:0.72rem;color:var(--text-muted)" id="audioTime">0:00</span>
+            <div style="display:flex;flex-direction:column;align-items:flex-end;gap:0.2rem;min-width:52px">
+              <span style="font-size:0.72rem;color:var(--text-muted)" id="audioTime">0:00</span>
+              <span style="font-size:0.6rem;color:#a78bfa">🎙 TC</span>
+            </div>
           </div>
           <audio id="ttsAudio" src="${currentJob.tts_audio_url}" style="display:none"
             ontimeupdate="App.updateAudioTime()" onended="App.onAudioEnded()"></audio>
-          <!-- Typecast 메타 정보 -->
-          ${currentJob.tts_emotion || currentJob.tts_tempo ? `
-            <div style="margin-top:0.5rem;display:flex;gap:0.5rem;flex-wrap:wrap">
-              ${currentJob.tts_emotion ? `<span style="font-size:0.68rem;background:rgba(124,58,237,0.1);color:#a78bfa;padding:0.2rem 0.5rem;border-radius:10px;border:1px solid rgba(124,58,237,0.2)">
-                감정: ${currentJob.tts_emotion}
-              </span>` : ''}
-              ${currentJob.tts_tempo ? `<span style="font-size:0.68rem;background:rgba(16,185,129,0.1);color:#34d399;padding:0.2rem 0.5rem;border-radius:10px;border:1px solid rgba(16,185,129,0.2)">
-                속도: ${currentJob.tts_tempo}×
-              </span>` : ''}
-              <span style="font-size:0.68rem;background:rgba(168,85,247,0.1);color:#c084fc;padding:0.2rem 0.5rem;border-radius:10px;border:1px solid rgba(168,85,247,0.2)">
-                🎙 Typecast
-              </span>
+
+          <!-- 속도 조절 슬라이더 (재생 속도) -->
+          <div style="background:var(--bg-secondary);border:1px solid var(--border);border-radius:8px;padding:0.65rem 0.85rem;margin-bottom:0.75rem">
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:0.4rem">
+              <span style="font-size:0.72rem;color:var(--text-muted)"><i class="fas fa-tachometer-alt" style="margin-right:4px"></i>재생 속도</span>
+              <div style="display:flex;align-items:center;gap:0.4rem">
+                <button onclick="App.setPlaybackSpeed(0.75)" style="background:${state.playbackSpeed===0.75?'rgba(124,58,237,0.25)':'var(--bg-secondary)'};border:1px solid ${state.playbackSpeed===0.75?'#7c3aed':'var(--border)'};color:${state.playbackSpeed===0.75?'#a78bfa':'var(--text-muted)'};padding:0.15rem 0.4rem;border-radius:4px;cursor:pointer;font-size:0.68rem">0.75×</button>
+                <button onclick="App.setPlaybackSpeed(0.9)" style="background:${state.playbackSpeed===0.9?'rgba(124,58,237,0.25)':'var(--bg-secondary)'};border:1px solid ${state.playbackSpeed===0.9?'#7c3aed':'var(--border)'};color:${state.playbackSpeed===0.9?'#a78bfa':'var(--text-muted)'};padding:0.15rem 0.4rem;border-radius:4px;cursor:pointer;font-size:0.68rem">0.9×</button>
+                <button onclick="App.setPlaybackSpeed(1.0)" style="background:${(state.playbackSpeed??1.0)===1.0?'rgba(124,58,237,0.25)':'var(--bg-secondary)'};border:1px solid ${(state.playbackSpeed??1.0)===1.0?'#7c3aed':'var(--border)'};color:${(state.playbackSpeed??1.0)===1.0?'#a78bfa':'var(--text-muted)'};padding:0.15rem 0.4rem;border-radius:4px;cursor:pointer;font-size:0.68rem">1.0×</button>
+                <button onclick="App.setPlaybackSpeed(1.1)" style="background:${state.playbackSpeed===1.1?'rgba(124,58,237,0.25)':'var(--bg-secondary)'};border:1px solid ${state.playbackSpeed===1.1?'#7c3aed':'var(--border)'};color:${state.playbackSpeed===1.1?'#a78bfa':'var(--text-muted)'};padding:0.15rem 0.4rem;border-radius:4px;cursor:pointer;font-size:0.68rem">1.1×</button>
+                <button onclick="App.setPlaybackSpeed(1.25)" style="background:${state.playbackSpeed===1.25?'rgba(124,58,237,0.25)':'var(--bg-secondary)'};border:1px solid ${state.playbackSpeed===1.25?'#7c3aed':'var(--border)'};color:${state.playbackSpeed===1.25?'#a78bfa':'var(--text-muted)'};padding:0.15rem 0.4rem;border-radius:4px;cursor:pointer;font-size:0.68rem">1.25×</button>
+              </div>
             </div>
-          ` : ''}
-          <div style="margin-top:0.75rem;display:flex;gap:0.5rem">
+            <input type="range" id="playbackSpeedSlider"
+              min="0.5" max="1.5" step="0.05" value="${state.playbackSpeed ?? 1.0}"
+              style="width:100%;accent-color:#7c3aed;height:4px"
+              oninput="App.setPlaybackSpeed(parseFloat(this.value))">
+            <div style="display:flex;justify-content:space-between;font-size:0.6rem;color:var(--text-muted);margin-top:0.2rem">
+              <span>0.5× (느리게)</span>
+              <span id="playbackSpeedLabel" style="color:var(--accent-light);font-weight:700">${(state.playbackSpeed??1.0).toFixed(2)}×</span>
+              <span>1.5× (빠르게)</span>
+            </div>
+          </div>
+
+          <!-- TTS 메타 정보 -->
+          <div style="display:flex;gap:0.4rem;flex-wrap:wrap;margin-bottom:0.75rem">
+            ${currentJob.tts_emotion?`<span style="font-size:0.65rem;background:rgba(124,58,237,0.1);color:#a78bfa;padding:0.15rem 0.4rem;border-radius:10px;border:1px solid rgba(124,58,237,0.2)">감정: ${currentJob.tts_emotion}</span>`:''}
+            ${currentJob.tts_tempo?`<span style="font-size:0.65rem;background:rgba(16,185,129,0.1);color:#34d399;padding:0.15rem 0.4rem;border-radius:10px;border:1px solid rgba(16,185,129,0.2)">생성속도: ${currentJob.tts_tempo}×</span>`:''}
+            <span style="font-size:0.65rem;background:rgba(168,85,247,0.1);color:#c084fc;padding:0.15rem 0.4rem;border-radius:10px;border:1px solid rgba(168,85,247,0.2)">🎙 Typecast ssfm-v30</span>
+          </div>
+
+          <!-- TTS 다운로드 + 재생성 -->
+          <div style="display:flex;gap:0.5rem;flex-wrap:wrap">
             <a href="${currentJob.tts_audio_url}" download="tts_typecast.mp3" class="btn-secondary">
-              <i class="fas fa-download"></i> 다운로드
+              <i class="fas fa-download"></i> TTS 다운로드
             </a>
             <button class="btn-secondary" id="btnRegenTTS">
-              <i class="fas fa-redo"></i> 재생성
+              <i class="fas fa-redo"></i> TTS 재생성
             </button>
           </div>
+        ` : hasScript ? `
+          <div style="text-align:center;padding:1.25rem;color:var(--text-muted);font-size:0.82rem">
+            <i class="fas fa-microphone" style="font-size:1.8rem;display:block;margin-bottom:0.5rem;opacity:0.3"></i>
+            위의 TTS 생성 버튼을 클릭하면<br>성우 목소리로 변환됩니다
+          </div>
         ` : `
-          <div style="text-align:center;padding:1.5rem;color:var(--text-muted);font-size:0.82rem">
-            ${hasScript
-              ? '<i class="fas fa-microphone" style="font-size:1.5rem;display:block;margin-bottom:0.5rem;opacity:0.3"></i>TTS 생성 버튼을 클릭하면<br>성우 목소리로 변환됩니다'
-              : '<i class="fas fa-file-alt" style="font-size:1.5rem;display:block;margin-bottom:0.5rem;opacity:0.3"></i>먼저 대본을 생성해주세요'}
+          <div style="text-align:center;padding:1.25rem;color:var(--text-muted);font-size:0.82rem">
+            <i class="fas fa-file-alt" style="font-size:1.8rem;display:block;margin-bottom:0.5rem;opacity:0.3"></i>
+            먼저 대본을 생성해주세요
           </div>
         `}
       </div>
 
-      <!-- n8n 워크플로우 안내 -->
-      <div style="background:var(--bg-card);border:1px solid var(--border);border-radius:12px;padding:1.25rem;margin-bottom:1.5rem">
-        <div style="font-size:0.8rem;font-weight:700;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.08em;margin-bottom:1rem;display:flex;align-items:center;gap:0.5rem">
-          <i class="fas fa-sitemap" style="color:var(--accent-light)"></i>
-          n8n 자동화 파이프라인
+      <!-- ━━ 영상 합성 & 다운로드 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ -->
+      <div style="background:var(--bg-card);border:1px solid var(--border);border-radius:14px;padding:1.25rem;margin-bottom:1.25rem">
+        <div style="font-size:0.82rem;font-weight:700;color:var(--text-primary);display:flex;align-items:center;gap:0.5rem;margin-bottom:1rem">
+          <i class="fas fa-film" style="color:#fb923c"></i>
+          영상 합성 &amp; 다운로드
+          ${hasVideo ? `<span style="font-size:0.65rem;color:#10b981;background:rgba(16,185,129,0.1);padding:0.15rem 0.4rem;border-radius:6px;border:1px solid rgba(16,185,129,0.3)">✅ 완성</span>` : ''}
         </div>
-        <div style="display:flex;flex-direction:column;gap:0.5rem">
-          ${[
-            { icon: '🔗', label: 'URL 수신', desc: 'Webhook 트리거', done: !!currentJob },
-            { icon: '📥', label: '영상 다운로드', desc: 'yt-dlp / API 추출', done: false },
-            { icon: '✂️', label: '자막 제거', desc: 'OpenCV + LaMa 인페인팅', done: false },
-            { icon: '🎙️', label: '음성·자막 합성', desc: 'FFmpeg 렌더링', done: false },
-            { icon: '📤', label: '완성 알림', desc: '다운로드 링크 제공', done: false }
-          ].map(step => `
-            <div style="display:flex;align-items:center;gap:0.75rem;padding:0.5rem 0.75rem;background:var(--bg-secondary);border-radius:6px;border:1px solid ${step.done ? 'rgba(16,185,129,0.3)' : 'var(--border)'}">
-              <span style="font-size:1rem">${step.icon}</span>
-              <div style="flex:1">
-                <div style="font-size:0.78rem;font-weight:600;color:${step.done ? '#10b981' : 'var(--text-primary)'}">${step.label}</div>
-                <div style="font-size:0.68rem;color:var(--text-muted)">${step.desc}</div>
-              </div>
-              ${step.done ? '<i class="fas fa-check-circle" style="color:#10b981;font-size:0.85rem"></i>' : ''}
-            </div>
-          `).join('')}
-        </div>
-        ${currentJob ? `
-          <div style="margin-top:0.75rem;padding:0.6rem 0.75rem;background:rgba(124,58,237,0.08);border:1px solid rgba(124,58,237,0.2);border-radius:6px;font-size:0.72rem;color:var(--accent-light)">
-            <i class="fas fa-info-circle"></i> Job ID: <code>${currentJob.job_id}</code>
+
+        ${hasVideo ? `
+          <!-- 완성된 영상 다운로드 -->
+          <div style="background:rgba(16,185,129,0.05);border:1px solid rgba(16,185,129,0.2);border-radius:10px;padding:1rem;text-align:center;margin-bottom:0.75rem">
+            <div style="font-size:2rem;margin-bottom:0.5rem">🎬</div>
+            <div style="font-size:0.85rem;font-weight:700;color:#10b981;margin-bottom:0.3rem">자막 합성 영상 완성!</div>
+            <div style="font-size:0.72rem;color:var(--text-muted);margin-bottom:0.75rem">TTS 음성 + 자막이 합성된 영상입니다</div>
+            <a href="${currentJob.output_video_url}" download="aistudio_output.webm" 
+              style="display:inline-flex;align-items:center;gap:0.4rem;background:#10b981;color:white;padding:0.55rem 1.2rem;border-radius:8px;text-decoration:none;font-size:0.82rem;font-weight:700">
+              <i class="fas fa-download"></i> 영상 다운로드
+            </a>
           </div>
-        ` : ''}
+          <button onclick="App.startVideoSynthesis()" class="btn-secondary" style="width:100%;justify-content:center">
+            <i class="fas fa-redo"></i> 다시 합성
+          </button>
+        ` : hasTTS ? `
+          <!-- 합성 준비 완료 or 합성 중 -->
+          ${isRendering ? `
+            <div id="renderingProgress" style="background:rgba(251,146,60,0.05);border:1px solid rgba(251,146,60,0.2);border-radius:10px;padding:1rem">
+              <div style="display:flex;align-items:center;gap:0.75rem;margin-bottom:0.75rem">
+                <span class="spinner" style="width:18px;height:18px;border-color:rgba(251,146,60,0.3);border-top-color:#fb923c"></span>
+                <div>
+                  <div style="font-size:0.82rem;font-weight:700;color:#fb923c">자막 합성 렌더링 중...</div>
+                  <div style="font-size:0.7rem;color:var(--text-muted)" id="renderStatusText">준비 중...</div>
+                </div>
+                <div style="margin-left:auto;font-size:0.85rem;font-weight:700;color:#fb923c" id="renderPct">0%</div>
+              </div>
+              <div style="height:6px;background:var(--bg-secondary);border-radius:99px;overflow:hidden">
+                <div id="renderProgressBar" style="height:100%;width:0%;background:linear-gradient(90deg,#f97316,#fb923c);border-radius:99px;transition:width 0.4s ease"></div>
+              </div>
+              <div style="margin-top:0.6rem;font-size:0.68rem;color:var(--text-muted);text-align:center">브라우저에서 직접 렌더링 중 — 탭을 닫지 마세요</div>
+            </div>
+          ` : `
+            <div style="text-align:center;padding:1rem">
+              <div style="font-size:0.82rem;color:var(--text-secondary);margin-bottom:0.5rem">
+                <i class="fas fa-check-circle" style="color:#a78bfa;margin-right:6px"></i>
+                TTS 음성 준비 완료 — 자막 합성을 시작할 수 있어요
+              </div>
+              <div style="font-size:0.72rem;color:var(--text-muted);margin-bottom:1rem">
+                대본 텍스트 → 자막 오버레이 + TTS 오디오가 합성된 영상이 생성됩니다
+              </div>
+
+              <!-- 자막 설정 -->
+              <div style="background:var(--bg-secondary);border:1px solid var(--border);border-radius:8px;padding:0.75rem;margin-bottom:0.85rem;text-align:left">
+                <div style="font-size:0.75rem;font-weight:600;color:var(--text-primary);margin-bottom:0.6rem">
+                  <i class="fas fa-closed-captioning" style="color:var(--accent-light);margin-right:5px"></i>자막 설정
+                </div>
+                <div style="display:grid;grid-template-columns:1fr 1fr;gap:0.5rem">
+                  <div>
+                    <label style="font-size:0.68rem;color:var(--text-muted)">글자 크기</label>
+                    <select id="subtitleFontSize" style="width:100%;background:var(--bg-card);border:1px solid var(--border);color:var(--text-primary);padding:0.3rem;border-radius:4px;font-size:0.72rem;margin-top:0.2rem">
+                      <option value="28">작게 (28px)</option>
+                      <option value="36" selected>보통 (36px)</option>
+                      <option value="44">크게 (44px)</option>
+                      <option value="52">매우 크게 (52px)</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label style="font-size:0.68rem;color:var(--text-muted)">자막 위치</label>
+                    <select id="subtitlePosition" style="width:100%;background:var(--bg-card);border:1px solid var(--border);color:var(--text-primary);padding:0.3rem;border-radius:4px;font-size:0.72rem;margin-top:0.2rem">
+                      <option value="bottom" selected>하단 (권장)</option>
+                      <option value="middle">중앙</option>
+                      <option value="top">상단</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label style="font-size:0.68rem;color:var(--text-muted)">글자 색상</label>
+                    <div style="display:flex;gap:0.3rem;margin-top:0.3rem">
+                      ${['#ffffff','#ffff00','#00ff99','#ff6b6b','#a78bfa'].map(c=>`
+                        <div onclick="App.state.subtitleColor='${c}';this.parentNode.querySelectorAll('div').forEach(d=>d.style.outline='none');this.style.outline='2px solid #7c3aed'"
+                          style="width:20px;height:20px;background:${c};border-radius:3px;cursor:pointer;border:1px solid var(--border);outline:${(state.subtitleColor??'#ffffff')===c?'2px solid #7c3aed':'none'}"></div>
+                      `).join('')}
+                    </div>
+                  </div>
+                  <div>
+                    <label style="font-size:0.68rem;color:var(--text-muted)">배경 바</label>
+                    <div style="display:flex;align-items:center;gap:0.4rem;margin-top:0.3rem">
+                      <input type="checkbox" id="subtitleBgBar" ${state.subtitleBgBar!==false?'checked':''} style="accent-color:#7c3aed">
+                      <span style="font-size:0.7rem;color:var(--text-secondary)">반투명 배경 바</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <button onclick="App.startVideoSynthesis()" class="btn-generate" style="font-size:0.85rem;padding:0.7rem 1.5rem">
+                <i class="fas fa-film"></i> 자막+TTS 영상 합성 시작
+              </button>
+              <div style="font-size:0.68rem;color:var(--text-muted);margin-top:0.4rem">
+                브라우저에서 직접 렌더링 · 약 20~40초 소요
+              </div>
+            </div>
+          `}
+        ` : `
+          <!-- TTS 없음 -->
+          <div style="text-align:center;padding:1.25rem;color:var(--text-muted);font-size:0.82rem">
+            <div style="font-size:2rem;margin-bottom:0.5rem;opacity:0.3">🎬</div>
+            <div>TTS 음성을 먼저 생성해주세요</div>
+            <div style="font-size:0.72rem;margin-top:0.3rem">대본 생성 → TTS 생성 → 영상 합성 순서로 진행합니다</div>
+          </div>
+        `}
       </div>
+
+      <!-- 숨겨진 캔버스 (렌더링용) -->
+      <canvas id="synthCanvas" style="display:none"></canvas>
     `
   },
 
@@ -927,10 +1029,16 @@ const App = {
       btnTTS.addEventListener('click', () => this.generateTTS())
     }
 
-    // TTS 재생성
+    // TTS 재생성 (workspace 버튼에서도)
     const btnRegenTTS = document.getElementById('btnRegenTTS')
     if (btnRegenTTS) {
       btnRegenTTS.addEventListener('click', () => this.generateTTS())
+    }
+
+    // TTS 생성 버튼 (workspace 상단)
+    const btnGenerateTTS = document.getElementById('btnGenerateTTS')
+    if (btnGenerateTTS) {
+      btnGenerateTTS.addEventListener('click', () => this.generateTTS())
     }
 
     // 감정 선택
@@ -1094,9 +1202,245 @@ const App = {
     }
   },
 
+  // ── 재생 속도 조절 ────────────────────────────────────────────
+  setPlaybackSpeed(speed) {
+    this.state.playbackSpeed = speed
+    const audio = document.getElementById('ttsAudio')
+    if (audio) audio.playbackRate = speed
+    // 슬라이더 + 라벨만 업데이트 (rerender 없이)
+    const slider = document.getElementById('playbackSpeedSlider')
+    if (slider) slider.value = speed
+    const lbl = document.getElementById('playbackSpeedLabel')
+    if (lbl) lbl.textContent = speed.toFixed(2) + '×'
+    // 버튼 하이라이트 갱신
+    const btns = document.querySelectorAll('[onclick^="App.setPlaybackSpeed"]')
+    btns.forEach(b => {
+      const v = parseFloat(b.getAttribute('onclick').match(/[\d.]+/)[0])
+      if (Math.abs(v - speed) < 0.001) {
+        b.style.background = 'rgba(124,58,237,0.25)'
+        b.style.borderColor = '#7c3aed'
+        b.style.color = '#a78bfa'
+      } else {
+        b.style.background = 'var(--bg-secondary)'
+        b.style.borderColor = 'var(--border)'
+        b.style.color = 'var(--text-muted)'
+      }
+    })
+  },
+
+  // ── 영상 합성 (Canvas + MediaRecorder) ───────────────────────
+  async startVideoSynthesis() {
+    if (!this.state.currentJob?.tts_audio_url) {
+      this.showToast('TTS 음성을 먼저 생성해주세요.', 'error'); return
+    }
+    if (!this.state.currentJob?.script_content) {
+      this.showToast('대본이 없습니다.', 'error'); return
+    }
+
+    this.state.isRendering = true
+    this.rerender()
+
+    // 진행 단계 서버에 알림
+    try {
+      await axios.patch(`/api/jobs/${this.state.currentJob.job_id}/stage`, {
+        stage: 'rendering', status: 'rendering'
+      })
+    } catch(e) {}
+
+    try {
+      const videoUrl = await this._renderSubtitleVideo()
+      this.state.currentJob.output_video_url = videoUrl
+      this.state.currentJob.stage = 'complete'
+      this.state.currentJob.status = 'complete'
+
+      // 서버에 완료 보고
+      try {
+        await axios.post(`/api/jobs/${this.state.currentJob.job_id}/synthesis-complete`, {
+          output_video_url: videoUrl
+        })
+      } catch(e) {}
+
+      this.showToast('🎬 영상 합성 완료! 다운로드 버튼을 클릭하세요.', 'success')
+    } catch(e) {
+      this.showToast('렌더링 오류: ' + e.message, 'error')
+      console.error(e)
+    } finally {
+      this.state.isRendering = false
+      this.rerender()
+    }
+  },
+
+  // ── 내부: Canvas+MediaRecorder로 자막+TTS 합성 ───────────────
+  async _renderSubtitleVideo() {
+    const job     = this.state.currentJob
+    const script  = job.script_content || ''
+    const audioSrc = job.tts_audio_url
+
+    // 설정 읽기
+    const fontSize    = parseInt(document.getElementById('subtitleFontSize')?.value || '36')
+    const position    = document.getElementById('subtitlePosition')?.value || 'bottom'
+    const fontColor   = this.state.subtitleColor || '#ffffff'
+    const showBgBar   = this.state.subtitleBgBar !== false
+    const bgCheck = document.getElementById('subtitleBgBar')
+    const hasBgBar = bgCheck ? bgCheck.checked : true
+
+    // 캔버스 설정 (9:16 세로 비율, 720×1280)
+    const W = 720, H = 1280
+    const canvas = document.getElementById('synthCanvas')
+    canvas.width  = W
+    canvas.height = H
+    canvas.style.display = 'none'
+    const ctx = canvas.getContext('2d')
+
+    // 오디오 로드
+    const audio = new Audio(audioSrc)
+    audio.crossOrigin = 'anonymous'
+    audio.playbackRate = this.state.playbackSpeed || 1.0
+    await new Promise((res, rej) => {
+      audio.onloadedmetadata = res
+      audio.onerror = rej
+      audio.load()
+    })
+    const duration = audio.duration || 20
+
+    // 대본을 줄 단위로 쪼개고 타이밍 계산
+    const lines = script.split('\n').map(l=>l.trim()).filter(l=>l.length > 0)
+    const timePerLine = duration / Math.max(lines.length, 1)
+
+    // MediaRecorder 설정
+    const stream = canvas.captureStream(30)
+    const audioCtx = new (window.AudioContext || window.webkitAudioContext)()
+    const source   = audioCtx.createMediaElementSource(audio)
+    const dest     = audioCtx.createMediaStreamDestination()
+    source.connect(dest)
+    source.connect(audioCtx.destination)
+    stream.addTrack(dest.stream.getAudioTracks()[0])
+
+    const mimeType = MediaRecorder.isTypeSupported('video/webm;codecs=vp9,opus')
+      ? 'video/webm;codecs=vp9,opus'
+      : MediaRecorder.isTypeSupported('video/webm')
+        ? 'video/webm' : 'video/webm'
+
+    const recorder = new MediaRecorder(stream, { mimeType, videoBitsPerSecond: 4000000 })
+    const chunks   = []
+    recorder.ondataavailable = e => { if(e.data.size>0) chunks.push(e.data) }
+
+    // 진행 업데이트 헬퍼
+    const setProgress = (pct, msg) => {
+      const bar = document.getElementById('renderProgressBar')
+      const pctEl = document.getElementById('renderPct')
+      const txt = document.getElementById('renderStatusText')
+      if (bar) bar.style.width = pct + '%'
+      if (pctEl) pctEl.textContent = Math.round(pct) + '%'
+      if (txt) txt.textContent = msg || ''
+    }
+
+    // 렌더링 시작
+    recorder.start(100)
+    audio.currentTime = 0
+    audio.play()
+    setProgress(5, '음성 재생 시작...')
+
+    let animFrame
+    const startTime = performance.now()
+
+    const drawFrame = () => {
+      const elapsed = (performance.now() - startTime) / 1000
+      const pct = Math.min(elapsed / duration * 100, 98)
+      setProgress(pct, `렌더링 중... (${elapsed.toFixed(1)}s / ${duration.toFixed(1)}s)`)
+
+      // 배경 (그라데이션)
+      const grad = ctx.createLinearGradient(0, 0, 0, H)
+      grad.addColorStop(0, '#0f0a1e')
+      grad.addColorStop(1, '#1a0a2e')
+      ctx.fillStyle = grad
+      ctx.fillRect(0, 0, W, H)
+
+      // 브랜드 워터마크
+      ctx.font = 'bold 20px sans-serif'
+      ctx.fillStyle = 'rgba(167,139,250,0.3)'
+      ctx.textAlign = 'center'
+      ctx.fillText('AI Studio', W/2, 40)
+
+      // 파형 시각화 (데코레이션)
+      const barCount = 40
+      for (let i = 0; i < barCount; i++) {
+        const x = (W / barCount) * i + W / barCount / 2
+        const h = 20 + Math.sin(elapsed * 3 + i * 0.5) * 15 + Math.random() * 10
+        ctx.fillStyle = `rgba(124,58,237,${0.15 + Math.sin(elapsed + i) * 0.1})`
+        ctx.fillRect(x - 4, H/2 - h/2, 8, h)
+      }
+
+      // 현재 자막 라인 결정
+      const lineIdx = Math.min(Math.floor(elapsed / timePerLine), lines.length - 1)
+      const currentLine = lines[Math.max(0, lineIdx)] || ''
+
+      if (currentLine) {
+        ctx.font = `bold ${fontSize}px 'Apple SD Gothic Neo', 'Noto Sans KR', sans-serif`
+        ctx.textAlign = 'center'
+        const textWidth = ctx.measureText(currentLine).width
+
+        // 자막 Y 위치
+        const yPos = position === 'top' ? 120
+          : position === 'middle' ? H/2
+          : H - 120
+
+        // 배경 바
+        if (hasBgBar) {
+          ctx.fillStyle = 'rgba(0,0,0,0.65)'
+          const pad = 20
+          const barH = fontSize + 28
+          ctx.roundRect
+            ? ctx.roundRect(W/2 - textWidth/2 - pad, yPos - fontSize - 4, textWidth + pad*2, barH, 8)
+            : ctx.fillRect(W/2 - textWidth/2 - pad, yPos - fontSize - 4, textWidth + pad*2, barH)
+          ctx.fill()
+        }
+
+        // 테두리 (stroke)
+        ctx.strokeStyle = 'rgba(0,0,0,0.9)'
+        ctx.lineWidth = 3
+        ctx.strokeText(currentLine, W/2, yPos)
+
+        // 자막 텍스트
+        ctx.fillStyle = fontColor
+        ctx.fillText(currentLine, W/2, yPos)
+      }
+
+      // 타임 표시
+      ctx.font = '18px monospace'
+      ctx.fillStyle = 'rgba(255,255,255,0.3)'
+      ctx.textAlign = 'right'
+      ctx.fillText(`${elapsed.toFixed(1)}s`, W - 20, H - 20)
+
+      if (elapsed < duration + 0.3) {
+        animFrame = requestAnimationFrame(drawFrame)
+      }
+    }
+
+    animFrame = requestAnimationFrame(drawFrame)
+
+    // 오디오 끝날 때까지 대기
+    await new Promise(res => {
+      audio.onended = res
+      setTimeout(res, (duration + 1) * 1000)
+    })
+
+    cancelAnimationFrame(animFrame)
+    setProgress(99, '마무리 중...')
+    recorder.stop()
+
+    await new Promise(res => { recorder.onstop = res })
+    audio.pause()
+    audioCtx.close()
+
+    const blob = new Blob(chunks, { type: mimeType })
+    const url  = URL.createObjectURL(blob)
+    setProgress(100, '완료!')
+    return url
+  },
+
   // ── 브라우저 TTS (API 없을 때 미리듣기) ─────────────────────
-  browserTTS() {
-    if (!this.state.currentJob?.script_content) return
+  browserTTS() {    if (!this.state.currentJob?.script_content) return
     const utter = new SpeechSynthesisUtterance(this.state.currentJob.script_content)
     utter.lang = 'ko-KR'
     utter.rate = 1.0
@@ -1110,6 +1454,8 @@ const App = {
     const audio = document.getElementById('ttsAudio')
     const playIcon = document.getElementById('playIcon')
     if (!audio) return
+    // 재생 속도 적용
+    audio.playbackRate = this.state.playbackSpeed || 1.0
     if (audio.paused) {
       audio.play()
       if (playIcon) { playIcon.className = 'fas fa-pause' }
@@ -1186,7 +1532,8 @@ const App = {
       pending: '대기 중',
       script_ready: '대본 완료',
       tts_ready: 'TTS 완료',
-      complete: '완성',
+      rendering: '렌더링 중',
+      complete: '✅ 완성',
       error: '오류'
     }
     return labels[status] || status

@@ -995,3 +995,61 @@ body {
   font-size: 0.85rem;
   line-height: 1.6;
 }
+
+/* ─── 영상 합성 / 렌더링 ─── */
+#renderProgressBar {
+  transition: width 0.4s ease;
+}
+
+@keyframes renderPulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.6; }
+}
+
+.rendering-active {
+  animation: renderPulse 1.5s ease-in-out infinite;
+}
+
+/* ─── 속도 버튼 ─── */
+.speed-btn {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+  padding: 0.15rem 0.4rem;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 0.68rem;
+  transition: all 0.15s;
+}
+.speed-btn:hover {
+  border-color: var(--accent);
+  color: var(--accent-light);
+}
+.speed-btn.active {
+  background: rgba(124,58,237,0.25);
+  border-color: #7c3aed;
+  color: #a78bfa;
+}
+
+/* ─── 다운로드 버튼 강조 ─── */
+.btn-download-video {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  background: linear-gradient(135deg, #10b981, #059669);
+  color: white;
+  padding: 0.65rem 1.5rem;
+  border-radius: 10px;
+  text-decoration: none;
+  font-size: 0.88rem;
+  font-weight: 700;
+  border: none;
+  cursor: pointer;
+  transition: all 0.2s;
+  box-shadow: 0 4px 15px rgba(16,185,129,0.3);
+}
+.btn-download-video:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 6px 20px rgba(16,185,129,0.4);
+}
+

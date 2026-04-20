@@ -408,6 +408,91 @@ apiRoutes.post('/jobs/:job_id/generate-tts', async (c) => {
 })
 
 // ─────────────────────────────────────────
+// 작업 진행 상황 실시간 조회 (폴링용)
+// ─────────────────────────────────────────
+apiRoutes.get('/jobs/:job_id/status', async (c) => {
+  try {
+    const job_id = c.req.param('job_id')
+    const job = await c.env.DB.prepare(
+      'SELECT job_id, status, stage, tts_audio_url, output_video_url, script_content, error_message, updated_at FROM jobs WHERE job_id = ?'
+    ).bind(job_id).first() as any
+
+    if (!job) return c.json({ ok: false, error: '작업 없음' }, 404)
+
+    // 단계별 진행률 계산
+    const stageProgress: Record<string, number> = {
+      waiting: 0,
+      script_done: 25,
+      tts_done: 55,
+      rendering: 75,
+      complete: 100
+    }
+    const progress = stageProgress[job.stage] ?? 0
+
+    return c.json({
+      ok: true,
+      data: {
+        job_id: job.job_id,
+        status: job.status,
+        stage: job.stage,
+        progress,
+        has_script: !!job.script_content,
+        has_tts: !!job.tts_audio_url,
+        has_video: !!job.output_video_url,
+        output_video_url: job.output_video_url || null,
+        error_message: job.error_message || null,
+        updated_at: job.updated_at
+      }
+    })
+  } catch (e: any) {
+    return c.json({ ok: false, error: e.message }, 500)
+  }
+})
+
+// ─────────────────────────────────────────
+// 클라이언트사이드 합성 완료 보고
+// (브라우저에서 Canvas+MediaRecorder로 합성 후 결과 URL 저장)
+// ─────────────────────────────────────────
+apiRoutes.post('/jobs/:job_id/synthesis-complete', async (c) => {
+  try {
+    const job_id = c.req.param('job_id')
+    const { output_video_url, video_duration } = await c.req.json()
+
+    await c.env.DB.prepare(`
+      UPDATE jobs SET
+        output_video_url = ?,
+        video_duration = ?,
+        status = 'complete',
+        stage = 'complete',
+        updated_at = CURRENT_TIMESTAMP
+      WHERE job_id = ?
+    `).bind(output_video_url || null, video_duration || null, job_id).run()
+
+    return c.json({ ok: true })
+  } catch (e: any) {
+    return c.json({ ok: false, error: e.message }, 500)
+  }
+})
+
+// ─────────────────────────────────────────
+// 합성 진행 단계 업데이트 (렌더링 시작 알림용)
+// ─────────────────────────────────────────
+apiRoutes.patch('/jobs/:job_id/stage', async (c) => {
+  try {
+    const job_id = c.req.param('job_id')
+    const { stage, status } = await c.req.json()
+
+    await c.env.DB.prepare(`
+      UPDATE jobs SET stage = ?, status = ?, updated_at = CURRENT_TIMESTAMP WHERE job_id = ?
+    `).bind(stage, status || stage, job_id).run()
+
+    return c.json({ ok: true })
+  } catch (e: any) {
+    return c.json({ ok: false, error: e.message }, 500)
+  }
+})
+
+// ─────────────────────────────────────────
 // 대본 직접 업데이트
 // ─────────────────────────────────────────
 apiRoutes.patch('/jobs/:job_id/script', async (c) => {
