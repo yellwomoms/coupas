@@ -20,9 +20,10 @@ const App = {
       subtitle_preset_id: 1,
       tts_voice_id: 1,
       value_keywords: [],
+      product_number: '',    // 제품번호 (CTA용)
       // Typecast 전용 옵션
-      tts_emotion: 'smart',   // smart | normal | happy | sad | angry | whisper | toneup | tonedown
-      tts_speed: 1.0          // 0.9 ~ 1.1
+      tts_emotion: 'smart',
+      tts_speed: 1.0
     },
 
     // 현재 작업 결과
@@ -177,6 +178,33 @@ const App = {
               placeholder="https://www.douyin.com/video/..."
               value="${this.escHtml(form.source_url)}"
             />
+          </div>
+
+          <div class="input-group">
+            <label class="input-label">
+              <i class="fas fa-hashtag" style="margin-right:4px;color:var(--accent-light)"></i>
+              제품번호 <span style="font-size:0.65rem;color:#a78bfa;margin-left:4px">CTA 자동 삽입</span>
+            </label>
+            <div style="display:flex;align-items:center;gap:0.5rem">
+              <input
+                type="text"
+                class="input-field"
+                id="productNumber"
+                placeholder="예: A-23, 7번, 상품코드 입력 (선택)"
+                value="${this.escHtml(form.product_number)}"
+                style="flex:1"
+              />
+            </div>
+            ${form.product_number ? `
+              <div id="ctaPreview" style="margin-top:0.35rem;padding:0.35rem 0.6rem;background:rgba(124,58,237,0.08);border:1px solid rgba(124,58,237,0.2);border-radius:6px;font-size:0.68rem;color:#a78bfa">
+                <i class="fas fa-magic" style="margin-right:4px"></i>
+                CTA 자동 생성: "...프로필 링크에서 <strong>${this.escHtml(form.product_number)}번</strong>으로 확인해주세요"
+              </div>
+            ` : `
+              <div id="ctaPreview" style="margin-top:0.35rem;font-size:0.65rem;color:var(--text-muted)">
+                미입력 시 기본 CTA: "프로필 링크 확인해보세요" 사용
+              </div>
+            `}
           </div>
 
           <div class="input-group">
@@ -773,6 +801,25 @@ const App = {
       })
     }
 
+    // 제품번호 입력
+    const productInput = document.getElementById('productNumber')
+    if (productInput) {
+      productInput.addEventListener('input', e => {
+        this.state.form.product_number = e.target.value
+        // CTA 미리보기 실시간 업데이트 (rerender 없이)
+        const ctaPreview = document.getElementById('ctaPreview')
+        if (ctaPreview) {
+          if (e.target.value) {
+            ctaPreview.innerHTML = `<i class="fas fa-magic" style="margin-right:4px"></i>CTA 자동 생성: "...프로필 링크에서 <strong>${this.escHtml(e.target.value)}번</strong>으로 확인해주세요"`
+            ctaPreview.style.display = 'block'
+          } else {
+            ctaPreview.innerHTML = `미입력 시 기본 CTA: "프로필 링크 확인해보세요" 사용`
+            ctaPreview.style.color = 'var(--text-muted)'
+          }
+        }
+      })
+    }
+
     // 컨텍스트 텍스트
     const ctxInput = document.getElementById('contextText')
     if (ctxInput) {
@@ -941,7 +988,8 @@ const App = {
         persona_id: form.persona_id,
         subtitle_preset_id: form.subtitle_preset_id,
         tts_voice_id: form.tts_voice_id,
-        value_keywords: form.value_keywords
+        value_keywords: form.value_keywords,
+        product_number: form.product_number   // 제품번호 전달
       })
 
       if (res.data.ok) {

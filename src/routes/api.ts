@@ -97,7 +97,8 @@ apiRoutes.post('/jobs', async (c) => {
       persona_id,
       subtitle_preset_id,
       tts_voice_id,
-      value_keywords = []
+      value_keywords = [],
+      product_number = ''   // ✅ 제품번호 (CTA용)
     } = body
 
     if (!source_url) {
@@ -110,10 +111,10 @@ apiRoutes.post('/jobs', async (c) => {
     // 고유 job_id 생성
     const job_id = `job_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`
 
-    // DB에 작업 저장
+    // DB에 작업 저장 (product_number 포함)
     await c.env.DB.prepare(`
-      INSERT INTO jobs (job_id, source_url, platform, context_text, persona_id, subtitle_preset_id, tts_voice_id, value_keywords, status, stage)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', 'waiting')
+      INSERT INTO jobs (job_id, source_url, platform, context_text, persona_id, subtitle_preset_id, tts_voice_id, value_keywords, product_number, status, stage)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', 'waiting')
     `).bind(
       job_id,
       source_url,
@@ -122,7 +123,8 @@ apiRoutes.post('/jobs', async (c) => {
       persona_id,
       subtitle_preset_id || 1,
       tts_voice_id || 1,
-      JSON.stringify(value_keywords)
+      JSON.stringify(value_keywords),
+      product_number
     ).run()
 
     // n8n 웹훅 트리거 (설정된 경우)
@@ -152,7 +154,9 @@ apiRoutes.post('/jobs', async (c) => {
         persona as any,
         context_text,
         value_keywords,
-        source_url
+        source_url,
+        false,
+        product_number  // ✅ 제품번호 전달
       )
       // 대본 저장
       await c.env.DB.prepare(`
@@ -166,7 +170,7 @@ apiRoutes.post('/jobs', async (c) => {
       `).bind(job_id, script_content, persona_id).run()
     } else {
       // API 키 없을 경우 샘플 대본 생성
-      script_content = generateSampleScript(persona as any, value_keywords)
+      script_content = generateSampleScript(persona as any, value_keywords, product_number)
       await c.env.DB.prepare(`
         UPDATE jobs SET script_content = ?, status = 'script_ready', stage = 'script_done', updated_at = CURRENT_TIMESTAMP
         WHERE job_id = ?
@@ -236,6 +240,7 @@ apiRoutes.post('/jobs/:job_id/regenerate-script', async (c) => {
     ).bind(job.persona_id).first() as any
 
     const value_keywords = JSON.parse(job.value_keywords || '[]')
+    const product_number = job.product_number || ''  // ✅ DB에서 제품번호 읽기
     let new_script = ''
 
     if (c.env.OPENAI_API_KEY && persona) {
@@ -245,10 +250,11 @@ apiRoutes.post('/jobs/:job_id/regenerate-script', async (c) => {
         job.context_text || '',
         value_keywords,
         job.source_url,
-        true // regenerate flag
+        true, // regenerate flag
+        product_number  // ✅ 제품번호 전달
       )
     } else {
-      new_script = generateSampleScript(persona, value_keywords)
+      new_script = generateSampleScript(persona, value_keywords, product_number)
     }
 
     // 버전 카운트
@@ -533,7 +539,7 @@ const TYPECAST_PRESET_VOICES = [
 ]
 
 // ─────────────────────────────────────────
-// 헬퍼: OpenAI 대본 생성 (PAS+E 강화)
+// 헬퍼: OpenAI 대본 생성 (감성 스토리텔링 완전판)
 // ─────────────────────────────────────────
 async function generateScript(
   apiKey: string,
@@ -541,53 +547,112 @@ async function generateScript(
   contextText: string,
   valueKeywords: string[],
   sourceUrl: string,
-  isRegenerate = false
+  isRegenerate = false,
+  productNumber = ''
 ): Promise<string> {
   const keywordsStr = valueKeywords.length > 0
-    ? `강조 가치 키워드: ${valueKeywords.join(', ')}`
-    : ''
+    ? `\n✅ 대본에서 반드시 녹여낼 핵심 가치: ${valueKeywords.join(', ')}` : ''
+
+  const productCTA = productNumber
+    ? `\n✅ CTA 필수 규칙: 반드시 "이 제품 궁금하면 프로필 링크에서 ${productNumber}번으로 확인해주세요" 로 마무리`
+    : `\n✅ CTA 규칙: 페르소나 말투에 맞는 자연스러운 "프로필 링크 확인해보세요" 변형 사용`
 
   const regenerateNote = isRegenerate
-    ? '이전과 다른 새로운 버전의 대본을 작성해주세요. 다른 각도와 표현을 사용하세요.'
-    : ''
+    ? `\n⚠️ 재생성 요청: 이전과 완전히 다른 상황·추억·감정 포인트를 사용하세요. 다른 장면, 다른 일상 속 순간으로 접근하세요.` : ''
 
-  const systemPrompt = `당신은 한국 숏폼 마케팅 전문 카피라이터입니다.
-도우인/샤오홍슈 영상의 상품 정보나 댓글을 바탕으로, 페르소나의 실제 경험담처럼 들리는 한국어 쇼츠 대본을 작성합니다.
+  const storyFrame = PERSONA_STORY_FRAMES[persona.name] || PERSONA_STORY_FRAMES['mom']
 
-━━━━━━━━━━━━━━━━━━━━━━━━
-핵심 원칙
-━━━━━━━━━━━━━━━━━━━━━━━━
-1. "광고"가 아닌 "추천"과 "경험담"처럼 작성
-2. PAS+E 구조 필수 적용:
-   - [P: Problem] 첫 1~2문장 - 시청자가 공감할 구체적 문제 제시
-   - [A: Agitation] 1~2문장 - 문제로 인한 감정적 고통·공감 고조
-   - [S: Solution] 1~2문장 - 제품/방법의 등장과 구체적 경험
-   - [E: Effect] 1~2문장 - 실제 변화·효과의 생생한 묘사
-   - [CTA] 마지막 1문장 - 행동 유도 (링크 확인, 써보기 등)
-3. 첫 3초 후킹: 시청자가 멈추게 하는 강렬한 첫 문장 (질문형/공감형/충격형)
-4. 15~30초 분량 = 약 70~120자 (TTS 속도 고려, Typecast 음성 싱크)
-5. 페르소나의 말투와 감성을 완벽히 구현
-6. 자연스러운 구어체, 실제로 말하는 것처럼
-7. 줄바꿈으로 호흡 포인트 표시 (TTS 자동 포즈 반영)
+  const systemPrompt = `당신은 대한민국 최고의 숏폼 감성 스토리텔러입니다.
+틱톡·릴스·쇼츠에서 엄지를 멈추게 하는, 실제 사람의 진짜 경험담처럼 들리는 대본을 씁니다.
+광고가 아닌, 친한 친구가 카카오톡으로 보내준 추천 메시지 같아야 합니다.
 
-━━━━━━━━━━━━━━━━━━━━━━━━
-페르소나 설정
-━━━━━━━━━━━━━━━━━━━━━━━━
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🔥 핵심 대본 원칙 5가지
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+【원칙 1】 첫 3초가 전부다 — 엄지를 멈춰라
+시청자는 0.5초 안에 스크롤을 넘깁니다.
+첫 문장에서 "이거 나 얘기잖아"라는 반응을 끌어내야 합니다.
+
+✅ 강력한 오프닝 패턴 (하나만 골라 사용):
+• 고백형: "솔직히 말하면 저 이거 쓰기 전까지는..." (취약성 노출)
+• 질문형: "혹시 저만 이런 거 아니죠?" (공감 유도)
+• 장면형: "새벽 2시에 혼자 울면서 검색했어요" (생생한 장면)
+• 반전형: "세 달이나 참다가 이걸 썼는데..." (시간의 무게)
+• 후회형: "진작에 알았으면 그 시간을 안 버렸을 텐데" (공감+후킹)
+
+【원칙 2】 제품 자랑 말고 — 그 날의 이야기를 해라
+❌ 금지 패턴:
+- "이 제품은 ~성분이 들어있어서 효과가 좋습니다"
+- "많은 분들이 사용하시는"
+- "임상 테스트 결과"
+- "지금 바로 구매하세요"
+
+✅ 대신 이렇게:
+- 제품을 처음 쓴 날의 날씨, 시간, 감정 상태
+- 효과를 느낀 순간의 구체적 장면 ("그날 아침 거울 보다가 멈췄어요")
+- 가족/친구의 반응 ("남편이 먼저 알아챘어요")
+- 이전과 이후의 삶 비교 ("그 전에는 / 지금은")
+
+【원칙 3】 생활 속 불편을 정확히 찌르고, 해소해라
+시청자가 매일 겪지만 말 못했던 불편을 콕 집어 표현해야 합니다.
+"맞아, 나도 그거 너무 불편했는데!" 라는 반응을 끌어내세요.
+
+불편은 구체적일수록 강합니다:
+- "매일 아침 허리 굽혀 청소기 돌리면서" (vs. "청소가 힘들어서")
+- "손마디가 빨개지도록 박박 닦아도" (vs. "열심히 청소해도")
+- "자기 전에 3번씩 확인하러 일어나서" (vs. "자꾸 신경 쓰여서")
+
+【원칙 4】 감정의 여정을 그려라 (PAS+E 감성 서사)
+━━━━━━━━━━━━━━━━━━
+[후킹 3초] → 시청자 멈추게 하는 첫 장면/고백 (1~2문장)
+[공감 고조] → 그 불편이 쌓이고 쌓인 감정, 지쳐있던 일상 (1~2문장)  
+[발견 순간] → 이 제품을 만난 계기 + 첫 경험의 생생한 묘사 (1~2문장)
+[삶의 변화] → "그날 이후로..." 달라진 일상의 구체적 장면 1개 (1~2문장)
+[CTA] → 제품번호 포함 자연스러운 마무리 (1문장)
+━━━━━━━━━━━━━━━━━━
+
+【원칙 5】 추억과 후기를 스토리에 녹여라
+가장 공감되는 대본은 "실제 경험한 사람만 알 수 있는" 디테일이 있습니다.
+- 쓴 날의 날씨, 계절 ("그날 비가 왔는데...")
+- 함께한 사람의 반응 ("아이가 처음으로 안 울었어요")
+- 사소한 행동의 변화 ("이제 아침마다 기대하면서 일어나요")
+- 비교 포인트 ("전에 쓰던 비싼 것보다 이게 더 잘 되더라고요")
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+👤 이 대본의 화자 (페르소나)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+후킹 스타일: ${storyFrame.hookStyle}
+공감 포인트: ${storyFrame.painPoint}
+감정 흐름: ${storyFrame.emotionArc}
+추억 장면 아이디어: ${storyFrame.memoryHook}
+CTA 톤: ${storyFrame.ctaStyle}
+
+페르소나 말투·배경:
 ${persona.prompt_template}
-
 ${keywordsStr}
-${regenerateNote}`
+${productCTA}
+${regenerateNote}
 
-  const userPrompt = `다음 정보를 바탕으로 쇼츠 대본을 작성해주세요:
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+📏 출력 형식 규칙
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+- 총 길이: 70~130자 (TTS 15~30초 분량)
+- 줄바꿈: 자연스러운 호흡 포인트마다 (TTS 포즈 역할)
+- 이모지: 마지막 CTA 문장에만 최대 1~2개
+- 구어체: 완전한 구어체 (글쓰기 ❌, 말하기 ✅)
+- 순수 텍스트만 출력 (태그·설명·번호 없음)`
+
+  const userPrompt = `아래 정보로 감성 쇼츠 대본을 작성해주세요.
 
 소스 URL: ${sourceUrl}
-추가 정보/댓글: ${contextText || '(없음)'}
+제품/상품 정보·댓글·컨텍스트: ${contextText || '(제공 없음 — URL 도메인과 카테고리를 유추해서 해당 제품군에 맞는 생생한 실제 경험담 스토리 창작)'}
 
-출력 규칙:
-- 대본 텍스트만 출력 (구조 태그, 설명 없음)
-- 각 PAS+E 파트는 줄바꿈으로 구분
-- 이모지 1~2개 허용 (마지막 CTA에)
-- 총 길이: 70~120자 (공백 포함)`
+⚠️ 주의:
+- 절대 광고처럼 쓰지 말 것
+- 실제로 겪었던 사람만 알 수 있는 디테일 1개 반드시 포함
+- 첫 문장에서 시청자의 공감을 즉시 끌어낼 것
+- CTA 규칙 반드시 적용`
 
   const response = await fetch('https://api.openai.com/v1/chat/completions', {
     method: 'POST',
@@ -601,8 +666,8 @@ ${regenerateNote}`
         { role: 'system', content: systemPrompt },
         { role: 'user', content: userPrompt }
       ],
-      max_tokens: 500,
-      temperature: isRegenerate ? 0.9 : 0.75
+      max_tokens: 700,
+      temperature: isRegenerate ? 0.95 : 0.85
     })
   })
 
@@ -615,63 +680,120 @@ ${regenerateNote}`
 }
 
 // ─────────────────────────────────────────
-// 헬퍼: 샘플 대본 (API 키 없을 때)
+// 헬퍼: 샘플 대본 (API 키 없을 때) - 감성 스토리 버전
 // ─────────────────────────────────────────
-function generateSampleScript(persona: any, valueKeywords: string[]): string {
+function generateSampleScript(persona: any, valueKeywords: string[], productNumber = ''): string {
+  const ctaSuffix = productNumber
+    ? `이 제품 궁금하면 프로필 링크에서 ${productNumber}번으로 확인해주세요 🔗`
+    : `프로필 링크 확인해보세요 🔗`
+
   const samples: Record<string, string> = {
-    mom: `밤마다 아이가 긁어서 속상하셨죠?
-좋다는 거 다 써봤는데 소용없고
-엄마 마음이 얼마나 찢어지던지요.
+    mom: `밤마다 아이 긁는 소리에 잠 못 잔 적 있으세요?
+저 세 달을 그렇게 보냈거든요, 진짜로.
 
-이거 쓰고 나서부터 달라졌어요.
-애가 안 긁어요, 진짜로.
+좋다는 건 다 발라봤는데
+아이는 새벽마다 울고, 저도 같이 울었어요.
 
-성분이 순해서 믿음도 가고
-지금은 피부가 꿀광이에요 우리 아이.
+그러다 이걸 쓴 첫날 밤—
+애가 긁지 않고 새근새근 자더라고요.
+그 고요함이 얼마나 감사했는지 몰라요.
 
-프로필 링크 확인해보세요 🔗`,
-    sister: `맨날 서서 일하다 퇴근하면 다리가 통나무잖아요.
-이거저거 다 써봤는데 다 거기서 거기.
+${ctaSuffix}`,
 
-근데 이거 퇴근하고 딱 10분만 해도
-진짜 극락이에요, 과장 아니에요.
+    sister: `퇴근하고 거울 봤다가 진짜 충격받은 날 있잖아요.
+나 이렇게 살아도 되나 싶었던 그 날.
 
-삶의 질이 올라간 게 느껴져요 진짜로.
-이제 이거 없으면 못 살 것 같아요.
+피부도 다리도 그냥 다 포기 상태였는데
+친구한테 이거 써보라고 꼭 쥐여줬어요.
 
-링크 타서 확인해봐요 👇`,
-    solo: `자취방에 뭘 들여놓기가 너무 부담스럽잖아요.
-공간도 없고 돈도 없는데.
+일주일 후에 남자친구가 먼저 알아챘어요.
+"야 너 요즘 왜 이렇게 좋아 보여?"
+그 한마디에 눈물 날 뻔했어요.
 
-근데 이건 접으면 진짜 한 뼘이에요.
-가격도 부담 없고 기능은 완벽해요.
+${ctaSuffix}`,
 
-자취 퀄리티가 갑자기 올라간 느낌이에요.
-진짜 잘 산 것 같아요.
+    solo: `자취방에서 혼자 밥 먹다가 문득 서글펐던 적 있죠?
+이것저것 사고 싶은데 공간도 돈도 없고.
 
-한번 써보세요, 후회 없어요 ✅`,
-    expert: `성인 3명 중 1명이 이 문제로 고생하는데
-많은 분들이 잘못된 방법을 쓰고 계세요.
+그냥 체념하고 살다가 이걸 발견한 거예요.
+가격 보고 "설마" 했는데 써보고 "진짜?" 했어요.
 
-이 제품은 임상 검증된 성분을 사용해서
-다른 제품들과 확실히 다르더라고요.
+지금은 자취방이 조금 더 살 만해진 느낌이에요.
+혼자 사는 게 나쁘지 않다는 생각, 처음 했어요.
 
-실제로 사용 후 수치가 개선된 걸 확인했어요.
-전문가 입장에서 자신 있게 추천합니다.
+${ctaSuffix}`,
 
-자세한 정보는 프로필 링크에서 확인하세요 📊`,
-    dad: `주말에 애 혼자 봤다가 완전 초토화됐는데요.
-어떻게 해줘야 하는지 진짜 막막하잖아요.
+    expert: `솔직히 저도 처음엔 반신반의했어요.
+이런 제품들이 다 거기서 거기라고 생각했거든요.
 
-이거 하나로 아이가 집중해주니까
-저도 드디어 숨 쉬었어요 솔직히.
+그런데 성분 보고 생각이 바뀌었어요.
+3개월 쓰면서 수치로 확인했을 때—
+이건 다르다, 확신이 생겼습니다.
 
-주말이 이제 두렵지 않아요 진짜로.
-가족 모두가 행복해졌어요.
+전문가 입장에서 책임감 있게 말할 수 있어요.
+지금까지 추천한 것 중 가장 후회 없는 선택이에요.
 
-육아하는 아빠들 꼭 써보세요 👍`
+${ctaSuffix}`,
+
+    dad: `주말에 애 혼자 봤다가 완전 멘탈 박살 난 적 있죠?
+저 진짜 울 뻔했어요, 세 살짜리한테 지고 있으니까.
+
+그날 밤에 이거 발견해서 다음 날 써봤는데—
+아이가 처음으로 저한테 와서 안기더라고요.
+그 순간 진짜 아빠가 된 것 같았어요.
+
+아내도 그날 처음으로 "오빠 최고"라고 했어요.
+
+${ctaSuffix}`
   }
 
   const personaName = persona?.name || 'mom'
   return samples[personaName] || samples['mom']
+}
+
+// ─────────────────────────────────────────
+// 페르소나별 스토리 프레임 (감성 스토리텔링 가이드)
+// ─────────────────────────────────────────
+const PERSONA_STORY_FRAMES: Record<string, {
+  hookStyle: string
+  painPoint: string
+  emotionArc: string
+  memoryHook: string
+  ctaStyle: string
+}> = {
+  mom: {
+    hookStyle: '아이를 위해 노심초사했던 새벽, 모성 본능을 건드리는 고백형 오프닝',
+    painPoint: '아이 피부/수면/식사/발달 걱정, 좋다는 건 다 써봤는데 안 됐던 지침',
+    emotionArc: '걱정 → 지침 → 기대 반신반의 → 효과 첫 순간의 안도와 감동',
+    memoryHook: '아이가 처음으로 긁지 않고 잠든 밤 / 아이가 웃으며 먹기 시작한 아침',
+    ctaStyle: '따뜻하고 공감하는 엄마 친구 말투로 자연스럽게 추천'
+  },
+  sister: {
+    hookStyle: '퇴근 후 거울 보고 현타 온 순간, MZ식 솔직 고백·자기비하 유머',
+    painPoint: '피부/몸매/스트레스/루틴 관리 포기 직전, 살기 바빠서 자기관리 못했던 죄책감',
+    emotionArc: '포기 → 뜻밖의 발견 → 반신반의 → 주변 반응에 놀람 → 자신감 회복',
+    memoryHook: '남자친구·동료가 먼저 알아챈 순간 / 오랜만에 거울 보고 만족한 아침',
+    ctaStyle: '친한 언니가 카카오톡으로 추천해주는 캐주얼하고 확신 있는 말투'
+  },
+  solo: {
+    hookStyle: '자취방 혼자의 쓸쓸한 순간, 가성비 절박함 또는 공간 한계 공감형 오프닝',
+    painPoint: '돈도 공간도 없는 자취 생활의 현실적 불편, 비싼 게 답이 아니란 걸 느낀 순간',
+    emotionArc: '체념 → 우연한 발견 → "이 가격에?" 반신반의 → 생활의 작은 행복 발견',
+    memoryHook: '혼자 자취방에서 처음으로 만족하며 쉰 저녁 / 친구 집에 자랑한 순간',
+    ctaStyle: '같이 자취하는 친구에게 꿀팁 알려주듯 실용적이고 솔직한 말투'
+  },
+  expert: {
+    hookStyle: '전문가도 처음엔 반신반의했다는 의외성 고백, 데이터나 경험 기반 신뢰 오프닝',
+    painPoint: '비슷비슷한 제품들 사이에서 제대로 된 것 찾기 어려웠던 전문가적 답답함',
+    emotionArc: '회의적 → 검증 시작 → 수치/변화로 확신 → 책임감 있는 공개 결심',
+    memoryHook: '3개월 후 수치가 달라진 날 / 제자/환자에게 처음 추천하게 된 계기',
+    ctaStyle: '전문가가 책임감을 갖고 정중하게 추천하는 신뢰감 있는 말투'
+  },
+  dad: {
+    hookStyle: '육아 현장의 솔직 망신·좌충우돌, 아빠 입장의 유쾌한 무기력 고백',
+    painPoint: '아이 앞에서 무능하게 느껴졌던 순간, 아내에게 인정받고 싶은 마음',
+    emotionArc: '멘탈 붕괴 → 절박한 해결책 찾기 → 효과 발견 → 가족의 인정과 감동',
+    memoryHook: '아이가 처음으로 아빠 품에 안긴 날 / 아내가 처음으로 "오빠 최고"라고 한 순간',
+    ctaStyle: '유쾌하고 솔직한 30대 아빠가 동네 아빠들에게 귀띔해주는 친근한 말투'
+  }
 }
