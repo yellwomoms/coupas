@@ -44,7 +44,7 @@ const App = {
 
     // ── 자막 상세 설정 ─────────────────────────────────────
     subtitleFont: 'NanumSquareRound',
-    subtitleFontSize: 38,
+    subtitleFontSize: 42,
     subtitlePosition: 'middle',
     subtitleFontColor: '#FFFFFF',       // 글자 색
     subtitleBgColor: 'rgba(0,0,0,0.65)', // 배경 색
@@ -805,10 +805,10 @@ const App = {
             <div style="display:grid;grid-template-columns:1fr 1fr;gap:0.5rem;margin-bottom:0.55rem">
               <div>
                 <label style="font-size:0.65rem;color:var(--text-muted);font-weight:600;display:block;margin-bottom:0.2rem">
-                  글자 크기 <strong style="color:var(--text-primary);font-size:0.72rem" id="fontSizeValResynth">${state.subtitleFontSize||38}px</strong>
+                  글자 크기 <strong style="color:var(--text-primary);font-size:0.72rem" id="fontSizeValResynth">${state.subtitleFontSize||42}px</strong>
                 </label>
                 <input type="range" id="subtitleFontSizeResynth" min="20" max="72" step="1"
-                  value="${state.subtitleFontSize||38}"
+                  value="${state.subtitleFontSize||42}"
                   style="width:100%;accent-color:#7c3aed;cursor:pointer"
                   oninput="App.state.subtitleFontSize=parseInt(this.value);const el=document.getElementById('fontSizeValResynth');if(el)el.textContent=this.value+'px'">
               </div>
@@ -1007,10 +1007,10 @@ const App = {
                 <div style="display:grid;grid-template-columns:1fr 1fr;gap:0.5rem;margin-bottom:0.6rem">
                   <div>
                     <label style="font-size:0.68rem;color:var(--text-muted);font-weight:600">
-                      글자 크기 <strong style="color:var(--text-primary);font-size:0.75rem" id="fontSizeValMain">${state.subtitleFontSize||38}px</strong>
+                      글자 크기 <strong style="color:var(--text-primary);font-size:0.75rem" id="fontSizeValMain">${state.subtitleFontSize||42}px</strong>
                     </label>
                     <input type="range" id="subtitleFontSize" min="20" max="72" step="1"
-                      value="${state.subtitleFontSize||38}"
+                      value="${state.subtitleFontSize||42}"
                       style="width:100%;accent-color:#7c3aed;cursor:pointer;margin-top:0.35rem;display:block"
                       oninput="App.state.subtitleFontSize=parseInt(this.value);const el=document.getElementById('fontSizeValMain');if(el)el.textContent=this.value+'px'">
                   </div>
@@ -1082,7 +1082,7 @@ const App = {
                 <!-- 실시간 자막 미리보기 -->
                 <div style="background:#111;border-radius:8px;padding:0.75rem;position:relative;overflow:hidden;min-height:52px;display:flex;align-items:${(state.subtitlePosition||'middle')==='top'?'flex-start':(state.subtitlePosition||'middle')==='middle'?'center':'flex-end'};justify-content:center">
                   <div style="padding:0.3rem 0.7rem;border-radius:5px;background:${state.subtitleBgBar!==false?(state.subtitleBgColor||'rgba(0,0,0,0.65)'):'transparent'};text-align:center;max-width:90%">
-                    <span style="font-family:${state.subtitleFont||'NanumSquareRound'};font-size:${Math.round((state.subtitleFontSize||38)*0.55)}px;color:${state.subtitleFontColor||'#FFFFFF'};font-weight:bold;text-shadow:1px 1px 2px ${state.subtitleBgBar!==false?'transparent':'#000'};line-height:1.3">
+                    <span style="font-family:${state.subtitleFont||'NanumSquareRound'};font-size:${Math.round((state.subtitleFontSize||42)*0.55)}px;color:${state.subtitleFontColor||'#FFFFFF'};font-weight:bold;text-shadow:1px 1px 2px ${state.subtitleBgBar!==false?'transparent':'#000'};line-height:1.3">
                       자막 미리보기 텍스트 — ABC 가나다
                     </span>
                   </div>
@@ -1145,10 +1145,10 @@ const App = {
               <div style="display:grid;grid-template-columns:1fr 1fr;gap:0.5rem;margin-bottom:0.5rem">
                 <div>
                   <label style="font-size:0.65rem;color:var(--text-muted);display:block;margin-bottom:0.2rem">
-                    글자 크기 <strong style="color:var(--text-primary);font-size:0.72rem" id="fontSizeValNoTTS">${state.subtitleFontSize||38}px</strong>
+                    글자 크기 <strong style="color:var(--text-primary);font-size:0.72rem" id="fontSizeValNoTTS">${state.subtitleFontSize||42}px</strong>
                   </label>
                   <input type="range" id="subtitleFontSizeNoTTS" min="20" max="72" step="1"
-                    value="${state.subtitleFontSize||38}"
+                    value="${state.subtitleFontSize||42}"
                     style="width:100%;accent-color:#7c3aed;cursor:pointer"
                     oninput="App.state.subtitleFontSize=parseInt(this.value);const el=document.getElementById('fontSizeValNoTTS');if(el)el.textContent=this.value+'px'">
                 </div>
@@ -2181,7 +2181,7 @@ const App = {
     const fontSizeEl = document.getElementById('subtitleFontSize')
     const positionEl = document.getElementById('subtitlePosition')
     const bgBarEl    = document.getElementById('subtitleBgBar')
-    const fontSize   = parseInt(fontSizeEl?.value || this.state.subtitleFontSize || '38')
+    const fontSize   = parseInt(fontSizeEl?.value || this.state.subtitleFontSize || '42')
     const position   = positionEl?.value || this.state.subtitlePosition || 'middle'
     const fontColor  = this.state.subtitleFontColor || this.state.subtitleColor || '#ffffff'
     const hasBgBar   = bgBarEl ? bgBarEl.checked : (this.state.subtitleBgBar !== false)
@@ -2494,7 +2494,6 @@ const App = {
     setProgress(20, '영상 렌더링 시작...')
 
     let animFrame
-    const startTime = performance.now()
 
     await new Promise((resolve) => {
       const drawFrame = () => {
@@ -2506,7 +2505,8 @@ const App = {
           resolve()
           return
         }
-        const elapsed = (performance.now() - startTime) / 1000
+        // ★ audio.currentTime 기준으로 자막 싱크 (performance.now() 오프셋 제거)
+        const elapsed = audio.currentTime
         setProgress(20 + Math.min(elapsed / duration * 70, 70), `렌더링 중... ${elapsed.toFixed(1)}s / ${duration.toFixed(1)}s`)
 
         if (hasBgVideo) {
@@ -2530,7 +2530,8 @@ const App = {
           this._drawSubtitle(ctx, lines, W, H, fontSize, fontColor, hasBgBar, position, fontFamily, bgColor)
         }
 
-        if (elapsed < duration + 0.3) {
+        // ★ audio.ended 또는 currentTime이 duration에 도달하면 종료
+        if (!audio.ended && elapsed < duration + 0.1) {
           animFrame = requestAnimationFrame(drawFrame)
         } else {
           cancelAnimationFrame(animFrame)
@@ -2593,8 +2594,9 @@ const App = {
     const threshold = Math.max(median * 0.15, 0.003)   // 최소 임계값 보장
 
     // ── 3) 음성/무음 구간 통합 (짧은 무음은 연결) ─────────────────
-    const MERGE_GAP  = 0.12   // 120ms 이하 무음은 연결
-    const MIN_SPEECH = 0.08   // 80ms 이하 발화는 무시
+    // ★ MERGE_GAP=0.30s: 300ms 미만 무음은 연결 → 문장 단위 버스트 감지
+    const MERGE_GAP  = 0.30   // 300ms 이하 무음은 연결 (단어→문장 단위)
+    const MIN_SPEECH = 0.15   // 150ms 이하 발화는 무시
 
     let regions = []
     let inSpeech = false
@@ -2630,7 +2632,7 @@ const App = {
   },
 
   // ── VAD 기반 자막 세그먼트 빌더 ────────────────────────────────
-  // 실제 음성 구간을 자막 글자 수에 비례해 나눠 타임코드 할당
+  // 실제 음성 구간을 자막 줄에 1:1 매핑 (VAD 문장 단위 정밀 싱크)
   _buildSubtitleSegmentsFromSpeech(script, duration, ctx, fontSize, canvasW, speechRegions) {
     // 1) 텍스트 → 줄 단위 분할 (기존 로직 재사용)
     const SAFE_W = canvasW - 120
@@ -2692,59 +2694,74 @@ const App = {
       return this._buildSubtitleSegments(script, duration, ctx, fontSize, canvasW, 0.3)
     }
 
-    // 3) 글자 수 기반으로 음성 구간을 자막 줄에 배분 ───────────────
-    // 전체 글자 수 합산
-    const totalChars = lineGroups.reduce((s, g) => s + g.chars, 0)
+    // 3) VAD 버스트를 자막 줄에 1:1 매핑 ──────────────────────────
+    // ★ 핵심 아이디어: VAD로 감지한 N개 버스트 ↔ 자막 N줄 직접 매핑
+    // 버스트 수 != 자막 줄 수인 경우 → 비율로 조정
+    const nBursts = speechRegions.length
+    const nLines  = lineGroups.length
 
-    // VAD 구간 타임라인을 플랫하게 펼치기 (start~end 배열)
-    const timeline = []
-    for (const r of speechRegions) timeline.push({ start: r.start, end: r.end, dur: r.end - r.start })
-
-    // 각 자막 줄이 차지할 시간 = (글자 수 / 전체 글자) * 전체 음성 시간
     const segments = []
-    let timelineIdx = 0
-    let timelineConsumed = 0   // 현재 VAD 구간에서 소비된 시간
 
-    for (let i = 0; i < lineGroups.length; i++) {
-      const g = lineGroups[i]
-      // 이 줄에 할당할 음성 시간
-      let allocSec = (g.chars / totalChars) * totalSpeechDur
-      const MIN_DUR = 0.5
-      if (allocSec < MIN_DUR) allocSec = MIN_DUR
-
-      // VAD 구간에서 allocSec만큼 소비하며 start/end 결정
-      let segStart = null
-      let remaining = allocSec
-
-      while (remaining > 0 && timelineIdx < timeline.length) {
-        const region = timeline[timelineIdx]
-        const availInRegion = region.dur - timelineConsumed
-        const regionAbsStart = region.start + timelineConsumed
-
-        if (segStart === null) segStart = regionAbsStart
-
-        if (availInRegion <= remaining) {
-          remaining -= availInRegion
-          timelineConsumed = 0
-          timelineIdx++
-        } else {
-          timelineConsumed += remaining
-          remaining = 0
+    if (nBursts >= nLines) {
+      // ── 버스트가 자막 줄 수보다 많거나 같음 → 인접 버스트를 묶어서 1줄에 배정
+      // 각 자막 줄이 가져갈 버스트 수 = floor(nBursts / nLines)
+      const burstsPerLine = Math.max(1, Math.round(nBursts / nLines))
+      let burstIdx = 0
+      for (let i = 0; i < nLines; i++) {
+        const startBurst = speechRegions[burstIdx]
+        const endBurstIdx = Math.min(burstIdx + burstsPerLine - 1, nBursts - 1)
+        const endBurst = speechRegions[endBurstIdx]
+        const segStart = startBurst ? startBurst.start : (segments.length > 0 ? segments[segments.length-1].end : 0)
+        const segEnd   = endBurst   ? Math.min(endBurst.end, duration) : duration
+        segments.push({
+          lines: [lineGroups[i].text],
+          text:  lineGroups[i].text,
+          start: segStart,
+          end:   segEnd,
+        })
+        burstIdx = endBurstIdx + 1
+        if (burstIdx >= nBursts) burstIdx = nBursts - 1
+      }
+    } else {
+      // ── 버스트가 자막 줄 수보다 적음 → 각 버스트를 글자 수 비율로 나눠 배정
+      // 글자 수 누적으로 자막 줄을 버스트에 순차 배정
+      const totalChars = lineGroups.reduce((s, g) => s + g.chars, 0)
+      let lineIdx = 0
+      for (let bi = 0; bi < nBursts; bi++) {
+        const burst = speechRegions[bi]
+        const burstDur = burst.end - burst.start
+        // 이 버스트에 속할 자막 줄 수 = 전체 줄 * (이 버스트 길이 / 전체 버스트 길이)
+        const fracLines = Math.max(1, Math.round((burstDur / totalSpeechDur) * nLines))
+        const endLineIdx = Math.min(lineIdx + fracLines, nLines)
+        const charsInGroup = lineGroups.slice(lineIdx, endLineIdx).reduce((s, g) => s + g.chars, 0) || 1
+        let elapsed = burst.start
+        for (let li = lineIdx; li < endLineIdx; li++) {
+          const frac = lineGroups[li].chars / charsInGroup
+          const segStart = elapsed
+          const segEnd   = Math.min(elapsed + burstDur * frac, duration)
+          segments.push({
+            lines: [lineGroups[li].text],
+            text:  lineGroups[li].text,
+            start: segStart,
+            end:   segEnd,
+          })
+          elapsed = segEnd
         }
+        lineIdx = endLineIdx
+        if (lineIdx >= nLines) break
       }
-
-      // VAD 구간 소진됐어도 남은 자막은 duration 안에 배치
-      if (segStart === null) {
-        segStart = segments.length > 0 ? segments[segments.length - 1].end : 0
+      // 남은 자막 줄 처리 (버스트 소진 후 남은 경우)
+      const lastEnd = segments.length > 0 ? segments[segments.length - 1].end : 0
+      const remainDur = (duration - lastEnd) / Math.max(1, nLines - lineIdx)
+      for (let li = lineIdx; li < nLines; li++) {
+        const segStart = lastEnd + (li - lineIdx) * remainDur
+        segments.push({
+          lines: [lineGroups[li].text],
+          text:  lineGroups[li].text,
+          start: segStart,
+          end:   Math.min(segStart + remainDur, duration),
+        })
       }
-      const segEnd = Math.min(segStart + allocSec, duration)
-
-      segments.push({
-        lines: [g.text],
-        text:  g.text,
-        start: segStart,
-        end:   segEnd,
-      })
     }
 
     // 마지막 세그먼트 duration 클램프
@@ -3187,7 +3204,7 @@ const App = {
         <div style="background:var(--bg-secondary);border:1px solid var(--border);border-radius:8px;padding:0.75rem;margin-bottom:1rem;font-size:0.72rem;color:var(--text-secondary);line-height:1.8">
           <div style="font-size:0.68rem;color:var(--text-muted);font-weight:600;margin-bottom:0.4rem">📋 저장될 설정</div>
           <div>🔤 폰트: <strong style="color:var(--text-primary)">${state.subtitleFont || 'NanumSquareRound'}</strong></div>
-          <div>📏 크기/위치: <strong style="color:var(--text-primary)">${state.subtitleFontSize || 38}px · ${state.subtitlePosition || 'middle'}</strong></div>
+          <div>📏 크기/위치: <strong style="color:var(--text-primary)">${state.subtitleFontSize || 42}px · ${state.subtitlePosition || 'middle'}</strong></div>
           <div>🎨 글자/배경: <span style="background:${state.subtitleFontColor||'#fff'};color:${state.subtitleFontColor==='#FFFFFF'||state.subtitleFontColor==='#ffffff'?'#333':'#fff'};padding:1px 6px;border-radius:3px;font-size:0.65rem">${state.subtitleFontColor||'#FFFFFF'}</span>
             · ${state.subtitleBgBar!==false?'배경바 ON':'배경바 OFF'}</div>
           <div>🎙 성우: <strong style="color:var(--text-primary)">${voiceName || '기본'}</strong></div>
@@ -3230,7 +3247,7 @@ const App = {
         name,
         description: descEl?.value?.trim() || '',
         subtitle_font:        state.subtitleFont || 'NanumSquareRound',
-        subtitle_font_size:   state.subtitleFontSize || 38,
+        subtitle_font_size:   state.subtitleFontSize || 42,
         subtitle_position:    state.subtitlePosition || 'middle',
         subtitle_font_color:  state.subtitleFontColor || '#FFFFFF',
         subtitle_bg_color:    state.subtitleBgColor || 'rgba(0,0,0,0.65)',
@@ -3340,7 +3357,7 @@ const App = {
     const fontSizeEl = document.getElementById('subtitleFontSizeNoTTS') || document.getElementById('subtitleFontSize')
     const positionEl = document.getElementById('subtitlePositionNoTTS') || document.getElementById('subtitlePosition')
     const bgBarEl    = document.getElementById('subtitleBgBar')
-    const fontSize   = parseInt(fontSizeEl?.value || this.state.subtitleFontSize || '38')
+    const fontSize   = parseInt(fontSizeEl?.value || this.state.subtitleFontSize || '42')
     const position   = positionEl?.value || this.state.subtitlePosition || 'middle'
     const fontColor  = this.state.subtitleFontColor || '#ffffff'
     const hasBgBar   = bgBarEl ? bgBarEl.checked : (this.state.subtitleBgBar !== false)
@@ -3538,7 +3555,8 @@ const App = {
 
     await new Promise(resolve => {
       const drawFrame = () => {
-        const elapsed = (performance.now() - startTime) / 1000
+        // ★ bgVideo가 있으면 bgVideo.currentTime 기준, 없으면 performance.now() 기준
+        const elapsed = hasBgVideo ? bgVideo.currentTime : (performance.now() - startTime) / 1000
         setProgress(Math.min(elapsed / estimatedDuration * 90, 90), `렌더링 중... ${elapsed.toFixed(1)}s`)
 
         if (hasBgVideo) {

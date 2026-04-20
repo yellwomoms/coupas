@@ -767,7 +767,7 @@ apiRoutes.post('/production-presets', async (c) => {
       name,
       description = '',
       subtitle_font = 'NanumSquareRound',
-      subtitle_font_size = 36,
+      subtitle_font_size = 42,
       subtitle_position = 'bottom',
       subtitle_font_color = '#FFFFFF',
       subtitle_bg_color = 'rgba(0,0,0,0.65)',
