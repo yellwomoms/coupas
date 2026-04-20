@@ -2241,10 +2241,12 @@ const App = {
       })
     }
 
-    // ── WebCodecs 지원 여부 확인 → 미지원시 MediaRecorder 폴백 ──
+    // ── 배경 영상이 있으면 MediaRecorder 방식으로 렌더링 ────────────
+    // (bgVideo는 실제 재생 중인 프레임을 drawImage해야 자연스러운 영상 보장)
+    // WebCodecs seek 루프는 첫 프레임 반복 문제가 있으므로 bgVideo 있을 때는 MediaRecorder 사용
     const supportsWebCodecs = typeof VideoEncoder !== 'undefined' && typeof AudioEncoder !== 'undefined'
-    if (!supportsWebCodecs || !window.Mp4Muxer) {
-      setProgress(12, 'WebCodecs 미지원 → MediaRecorder 방식으로 진행...')
+    if (!supportsWebCodecs || !window.Mp4Muxer || hasBgVideo) {
+      setProgress(12, hasBgVideo ? '영상 합성 중 (실시간 재생 방식)...' : 'WebCodecs 미지원 → MediaRecorder 방식으로 진행...')
       return await this._renderWithMediaRecorder(
         canvas, ctx, W, H, bgVideo, hasBgVideo, audioSrc, duration,
         segments, fontSize, fontColor, hasBgBar, position, fontFamily, bgColor, setProgress
@@ -2328,53 +2330,71 @@ const App = {
     await audioEncoder.flush()
     audioEncoder.close()
 
-    // ── 비디오 프레임 렌더링 ──────────────────────────────────────
+    // ── 비디오 프레임 렌더링 (requestAnimationFrame 방식) ──────────
+    // bgVideo는 _loadBgVideo에서 이미 play() 상태 → currentTime으로 seek 금지
+    // 실제 재생 중인 프레임을 그대로 drawImage하여 자연스러운 영상 보장
     setProgress(30, '비디오 프레임 렌더링 중...')
+
+    if (hasBgVideo) {
+      bgVideo.currentTime = 0
+      await new Promise(r => { bgVideo.onseeked = r; setTimeout(r, 500) })
+      bgVideo.play().catch(() => {})
+    }
+
+    let encodedFrames = 0
     const totalFrames = Math.ceil(duration * FPS)
 
-    for (let f = 0; f < totalFrames; f++) {
-      if (this._renderCancelFlag) { videoEncoder.close(); muxer.finalize(); return null }
+    await new Promise((resolve) => {
+      const encodeStart = performance.now()
 
-      const t = f / FPS   // 현재 시간(초)
+      const encodeFrame = () => {
+        if (this._renderCancelFlag) { videoEncoder.close(); muxer.finalize(); resolve(); return }
 
-      // 배경 그리기
-      if (hasBgVideo) {
-        bgVideo.currentTime = t % (bgVideo.duration || duration)
-        const vw = bgVideo.videoWidth  || W
-        const vh = bgVideo.videoHeight || H
-        const scale = Math.max(W / vw, H / vh)
-        const dw = vw * scale, dh = vh * scale
-        ctx.drawImage(bgVideo, (W - dw) / 2, (H - dh) / 2, dw, dh)
-      } else {
-        const grad = ctx.createLinearGradient(0, 0, 0, H)
-        grad.addColorStop(0, '#0d0820')
-        grad.addColorStop(0.5, '#1a0a3a')
-        grad.addColorStop(1, '#0a0515')
-        ctx.fillStyle = grad
-        ctx.fillRect(0, 0, W, H)
+        const elapsed = (performance.now() - encodeStart) / 1000
+        const t = encodedFrames / FPS
+
+        if (encodedFrames >= totalFrames) { resolve(); return }
+
+        // 배경 그리기
+        if (hasBgVideo) {
+          const vw = bgVideo.videoWidth  || W
+          const vh = bgVideo.videoHeight || H
+          const scale = Math.max(W / vw, H / vh)
+          const dw = vw * scale, dh = vh * scale
+          ctx.drawImage(bgVideo, (W - dw) / 2, (H - dh) / 2, dw, dh)
+        } else {
+          const grad = ctx.createLinearGradient(0, 0, 0, H)
+          grad.addColorStop(0, '#0d0820')
+          grad.addColorStop(0.5, '#1a0a3a')
+          grad.addColorStop(1, '#0a0515')
+          ctx.fillStyle = grad
+          ctx.fillRect(0, 0, W, H)
+        }
+
+        // 자막 그리기
+        const seg = segments.find(s => t >= s.start && t < s.end)
+        if (seg) {
+          const lines = seg.text.split('\n').filter(Boolean)
+          this._drawSubtitle(ctx, lines, W, H, fontSize, fontColor, hasBgBar, position, fontFamily, bgColor)
+        }
+
+        // VideoFrame 인코딩
+        const timestamp = Math.round(encodedFrames / FPS * 1_000_000)   // µs
+        const frame = new VideoFrame(canvas, { timestamp, duration: Math.round(1_000_000 / FPS) })
+        videoEncoder.encode(frame, { keyFrame: encodedFrames % (FPS * 2) === 0 })
+        frame.close()
+        encodedFrames++
+
+        // 진행률 업데이트 (30~90%)
+        if (encodedFrames % 15 === 0) {
+          const pct = 30 + (encodedFrames / totalFrames) * 60
+          setProgress(pct, `프레임 렌더링... ${encodedFrames}/${totalFrames}`)
+        }
+
+        requestAnimationFrame(encodeFrame)
       }
-
-      // 자막 그리기
-      const seg = segments.find(s => t >= s.start && t < s.end)
-      if (seg) {
-        const lines = seg.text.split('\n').filter(Boolean)
-        this._drawSubtitle(ctx, lines, W, H, fontSize, fontColor, hasBgBar, position, fontFamily, bgColor)
-      }
-
-      // VideoFrame 인코딩
-      const timestamp = Math.round(f / FPS * 1_000_000)   // µs
-      const frame = new VideoFrame(canvas, { timestamp, duration: Math.round(1_000_000 / FPS) })
-      videoEncoder.encode(frame, { keyFrame: f % (FPS * 2) === 0 })
-      frame.close()
-
-      // 진행률 업데이트 (30~90%)
-      if (f % 15 === 0) {
-        const pct = 30 + (f / totalFrames) * 60
-        setProgress(pct, `프레임 렌더링... ${f}/${totalFrames}`)
-        // 브라우저 숨쉴 시간 (매 30프레임마다 yield)
-        if (f % 30 === 0) await new Promise(r => setTimeout(r, 0))
-      }
-    }
+      requestAnimationFrame(encodeFrame)
+    })
 
     setProgress(92, 'MP4 파일 생성 중...')
     await videoEncoder.flush()
@@ -2419,7 +2439,12 @@ const App = {
 
     recorder.start(100)
     audio.currentTime = 0
+    if (hasBgVideo) {
+      bgVideo.currentTime = 0
+      await new Promise(r => { bgVideo.onseeked = r; setTimeout(r, 500) })
+    }
     audio.play()
+    if (hasBgVideo) bgVideo.play().catch(() => {})
     setProgress(20, '영상 렌더링 시작...')
 
     let animFrame
@@ -2492,7 +2517,7 @@ const App = {
       v.muted   = true
       v.loop    = true
       v.playsInline = true
-      v.onloadeddata = () => { v.play(); resolve(v) }
+      v.onloadeddata = () => { resolve(v) }  // play()는 렌더 시작 시 직접 호출
       v.onerror  = reject
       v.load()
     })
@@ -3309,7 +3334,7 @@ const App = {
     }
 
     const supportsWebCodecs = typeof VideoEncoder !== 'undefined' && !!window.Mp4Muxer
-    if (supportsWebCodecs) {
+    if (supportsWebCodecs && !hasBgVideo) {
       // ── WebCodecs 경로: 비디오만 (오디오 없음) ─────────────────
       setProgress(5, 'H.264 인코더 초기화 중...')
       const FPS = 30
@@ -3335,46 +3360,59 @@ const App = {
       })
 
       setProgress(10, '비디오 프레임 렌더링 중...')
+
+      if (hasBgVideo) {
+        bgVideo.currentTime = 0
+        await new Promise(r => { bgVideo.onseeked = r; setTimeout(r, 500) })
+        bgVideo.play().catch(() => {})
+      }
+
+      let encodedFramesNA = 0
       const totalFrames = Math.ceil(estimatedDuration * FPS)
 
-      for (let f = 0; f < totalFrames; f++) {
-        if (this._renderCancelFlag) { videoEncoder.close(); muxer.finalize(); return null }
-        const t = f / FPS
-        const elapsed = t
+      await new Promise((resolve) => {
+        const encodeFrame = () => {
+          if (this._renderCancelFlag) { videoEncoder.close(); muxer.finalize(); resolve(); return }
+          if (encodedFramesNA >= totalFrames) { resolve(); return }
 
-        if (hasBgVideo) {
-          bgVideo.currentTime = t % (bgVideo.duration || estimatedDuration)
-          const vw = bgVideo.videoWidth || W, vh = bgVideo.videoHeight || H
-          const scale = Math.max(W / vw, H / vh)
-          ctx.drawImage(bgVideo, (W - vw*scale)/2, (H - vh*scale)/2, vw*scale, vh*scale)
-        } else {
-          const grad = ctx.createLinearGradient(0, 0, 0, H)
-          grad.addColorStop(0, '#0d0820'); grad.addColorStop(0.5, '#160c30'); grad.addColorStop(1, '#0d0820')
-          ctx.fillStyle = grad; ctx.fillRect(0, 0, W, H)
-          for (let i = 0; i < 36; i++) {
-            const x = (W / 36) * i + W / 72
-            const h = 18 + Math.sin(elapsed * 2.5 + i * 0.55) * 14
-            ctx.fillStyle = `rgba(124,58,237,${0.12 + Math.sin(elapsed + i) * 0.08})`
-            ctx.fillRect(x - 3, H / 2 - h / 2, 6, h)
+          const t = encodedFramesNA / FPS
+
+          if (hasBgVideo) {
+            const vw = bgVideo.videoWidth || W, vh = bgVideo.videoHeight || H
+            const scale = Math.max(W / vw, H / vh)
+            ctx.drawImage(bgVideo, (W - vw*scale)/2, (H - vh*scale)/2, vw*scale, vh*scale)
+          } else {
+            const grad = ctx.createLinearGradient(0, 0, 0, H)
+            grad.addColorStop(0, '#0d0820'); grad.addColorStop(0.5, '#160c30'); grad.addColorStop(1, '#0d0820')
+            ctx.fillStyle = grad; ctx.fillRect(0, 0, W, H)
+            for (let i = 0; i < 36; i++) {
+              const x = (W / 36) * i + W / 72
+              const h = 18 + Math.sin(t * 2.5 + i * 0.55) * 14
+              ctx.fillStyle = `rgba(124,58,237,${0.12 + Math.sin(t + i) * 0.08})`
+              ctx.fillRect(x - 3, H / 2 - h / 2, 6, h)
+            }
           }
-        }
 
-        const seg = segments.find(s => t >= s.start && t < s.end)
-        if (seg) {
-          const lines = seg.text ? seg.text.split('\n').filter(Boolean) : (seg.lines || [])
-          this._drawSubtitle(ctx, lines, W, H, fontSize, fontColor, hasBgBar, position, fontFamily, bgColor)
-        }
+          const seg = segments.find(s => t >= s.start && t < s.end)
+          if (seg) {
+            const lines = seg.text ? seg.text.split('\n').filter(Boolean) : (seg.lines || [])
+            this._drawSubtitle(ctx, lines, W, H, fontSize, fontColor, hasBgBar, position, fontFamily, bgColor)
+          }
 
-        const timestamp = Math.round(f / FPS * 1_000_000)
-        const frame = new VideoFrame(canvas, { timestamp, duration: Math.round(1_000_000 / FPS) })
-        videoEncoder.encode(frame, { keyFrame: f % (FPS * 2) === 0 })
-        frame.close()
+          const timestamp = Math.round(encodedFramesNA / FPS * 1_000_000)
+          const frame = new VideoFrame(canvas, { timestamp, duration: Math.round(1_000_000 / FPS) })
+          videoEncoder.encode(frame, { keyFrame: encodedFramesNA % (FPS * 2) === 0 })
+          frame.close()
+          encodedFramesNA++
 
-        if (f % 15 === 0) {
-          setProgress(10 + (f / totalFrames) * 82, `프레임 렌더링... ${f}/${totalFrames}`)
-          if (f % 30 === 0) await new Promise(r => setTimeout(r, 0))
+          if (encodedFramesNA % 15 === 0) {
+            setProgress(10 + (encodedFramesNA / totalFrames) * 82, `프레임 렌더링... ${encodedFramesNA}/${totalFrames}`)
+          }
+
+          requestAnimationFrame(encodeFrame)
         }
-      }
+        requestAnimationFrame(encodeFrame)
+      })
 
       setProgress(94, 'MP4 파일 생성 중...')
       await videoEncoder.flush()
@@ -3386,8 +3424,8 @@ const App = {
       return URL.createObjectURL(mp4Blob)
     }
 
-    // ── MediaRecorder 폴백 (WebCodecs 미지원 브라우저) ───────────
-    setProgress(5, 'MediaRecorder 방식으로 렌더링...')
+    // ── MediaRecorder 폴백 (bgVideo 있거나 WebCodecs 미지원) ────────
+    setProgress(5, hasBgVideo ? '영상 합성 중 (실시간 재생 방식)...' : 'MediaRecorder 방식으로 렌더링...')
     const stream  = canvas.captureStream(30)
     const mimeType = MediaRecorder.isTypeSupported('video/webm;codecs=vp9')
       ? 'video/webm;codecs=vp9' : 'video/webm'
@@ -3396,6 +3434,11 @@ const App = {
     recorder.ondataavailable = e => { if (e.data.size > 0) chunks.push(e.data) }
 
     recorder.start(100)
+    if (hasBgVideo) {
+      bgVideo.currentTime = 0
+      await new Promise(r => { bgVideo.onseeked = r; setTimeout(r, 500) })
+      bgVideo.play().catch(() => {})
+    }
     const startTime = performance.now()
     let animFrame
 
