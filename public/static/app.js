@@ -2221,9 +2221,12 @@ const App = {
     const duration = audioBuffer.duration || 20
     await audioCtxDecode.close()
 
-    // ── 자막 세그먼트 생성 ────────────────────────────────────────
-    const TTS_PADDING_OFFSET = 0.35
-    const segments = this._buildSubtitleSegments(script, duration, ctx, fontSize, W, TTS_PADDING_OFFSET)
+    // ── 오디오 에너지 분석으로 실제 음성 구간 감지 (VAD) ─────────
+    setProgress(8, '음성 구간 분석 중...')
+    const speechRegions = this._detectSpeechRegions(audioBuffer)
+
+    // ── 자막 세그먼트 생성 (VAD 기반 싱크) ──────────────────────
+    const segments = this._buildSubtitleSegmentsFromSpeech(script, duration, ctx, fontSize, W, speechRegions)
 
     setProgress(10, 'MP4 인코더 초기화 중...')
 
@@ -2495,7 +2498,193 @@ const App = {
     })
   },
 
-  // ── 자막 세그먼트 빌더 ────────────────────────────────────────
+  // ── TTS 오디오 에너지 분석 → 실제 음성 구간 감지 (VAD) ────────
+  // AudioBuffer의 RMS 에너지를 20ms 프레임 단위로 분석해
+  // 무음 / 발화 구간을 타임스탬프 배열로 반환
+  _detectSpeechRegions(audioBuffer) {
+    const sampleRate  = audioBuffer.sampleRate
+    const channelData = audioBuffer.getChannelData(0)   // 모노 기준
+    const totalSamples = channelData.length
+    const frameSamples = Math.round(sampleRate * 0.02)  // 20ms 프레임
+
+    // ── 1) RMS 에너지 계산 ────────────────────────────────────────
+    const frames = []
+    for (let i = 0; i < totalSamples; i += frameSamples) {
+      let sum = 0
+      const end = Math.min(i + frameSamples, totalSamples)
+      for (let j = i; j < end; j++) sum += channelData[j] ** 2
+      frames.push(Math.sqrt(sum / (end - i)))
+    }
+
+    // ── 2) 동적 임계값: 전체 RMS 중앙값의 15% ─────────────────────
+    const sorted = [...frames].sort((a, b) => a - b)
+    const median = sorted[Math.floor(sorted.length * 0.5)] || 0.001
+    const threshold = Math.max(median * 0.15, 0.003)   // 최소 임계값 보장
+
+    // ── 3) 음성/무음 구간 통합 (짧은 무음은 연결) ─────────────────
+    const MERGE_GAP  = 0.12   // 120ms 이하 무음은 연결
+    const MIN_SPEECH = 0.08   // 80ms 이하 발화는 무시
+
+    let regions = []
+    let inSpeech = false
+    let speechStart = 0
+
+    for (let i = 0; i < frames.length; i++) {
+      const t = i * 0.02
+      if (!inSpeech && frames[i] > threshold) {
+        inSpeech = true
+        speechStart = t
+      } else if (inSpeech && frames[i] <= threshold) {
+        // 짧은 무음 → 앞뒤를 합칠지 확인
+        let gapEnd = i
+        while (gapEnd < frames.length && frames[gapEnd] <= threshold) gapEnd++
+        const gapDur = (gapEnd - i) * 0.02
+        if (gapDur < MERGE_GAP && gapEnd < frames.length) {
+          // 짧은 무음 → 합치기 (계속 발화 중)
+          i = gapEnd - 1
+        } else {
+          // 충분한 무음 → 구간 종료
+          const dur = t - speechStart
+          if (dur >= MIN_SPEECH) regions.push({ start: speechStart, end: t })
+          inSpeech = false
+        }
+      }
+    }
+    if (inSpeech) {
+      const dur = frames.length * 0.02 - speechStart
+      if (dur >= MIN_SPEECH) regions.push({ start: speechStart, end: frames.length * 0.02 })
+    }
+
+    return regions
+  },
+
+  // ── VAD 기반 자막 세그먼트 빌더 ────────────────────────────────
+  // 실제 음성 구간을 자막 글자 수에 비례해 나눠 타임코드 할당
+  _buildSubtitleSegmentsFromSpeech(script, duration, ctx, fontSize, canvasW, speechRegions) {
+    // 1) 텍스트 → 줄 단위 분할 (기존 로직 재사용)
+    const SAFE_W = canvasW - 120
+    const MAX_LINE_CHARS = 14
+    ctx.font = `bold ${fontSize}px 'Apple SD Gothic Neo','Noto Sans KR',sans-serif`
+
+    const wrapText = (text) => {
+      const words = text.split(' ')
+      const lines = []
+      let cur = ''
+      for (const word of words) {
+        if (!word) continue
+        const candidate = cur ? cur + ' ' + word : word
+        if (cur && (candidate.length > MAX_LINE_CHARS || ctx.measureText(candidate).width > SAFE_W)) {
+          lines.push(cur); cur = word
+        } else { cur = candidate }
+      }
+      if (cur) lines.push(cur)
+      const result = []
+      for (const line of lines) {
+        if (line.length <= MAX_LINE_CHARS && ctx.measureText(line).width <= SAFE_W) {
+          result.push(line)
+        } else {
+          let tmp = ''
+          for (const ch of line) {
+            const test = tmp + ch
+            if ((test.replace(/\s/g, '').length > MAX_LINE_CHARS || ctx.measureText(test).width > SAFE_W) && tmp.length > 0) {
+              result.push(tmp); tmp = ch
+            } else { tmp = test }
+          }
+          if (tmp) result.push(tmp)
+        }
+      }
+      return result.length > 0 ? result : [text]
+    }
+
+    // 대본 → 청크(문장) 분리
+    const rawLines = script.trim().split('\n').filter(l => l.trim())
+    const chunks = []
+    for (const line of rawLines) {
+      const parts = line.split(/(?<=[.!?~。！？])\s*/)
+      for (const p of parts) { if (p.trim()) chunks.push(p.trim()) }
+    }
+    if (chunks.length === 0) chunks.push(script.trim())
+
+    // 줄 단위 그룹 생성
+    const lineGroups = []
+    for (const chunk of chunks) {
+      for (const line of wrapText(chunk)) {
+        const chars = line.replace(/\s/g, '').length || 1
+        lineGroups.push({ text: line, chars })
+      }
+    }
+    if (lineGroups.length === 0) return []
+
+    // 2) VAD 구간이 없거나 너무 짧으면 → 균등 분배 폴백
+    const totalSpeechDur = speechRegions.reduce((s, r) => s + (r.end - r.start), 0)
+    if (speechRegions.length === 0 || totalSpeechDur < 1.0) {
+      return this._buildSubtitleSegments(script, duration, ctx, fontSize, canvasW, 0.3)
+    }
+
+    // 3) 글자 수 기반으로 음성 구간을 자막 줄에 배분 ───────────────
+    // 전체 글자 수 합산
+    const totalChars = lineGroups.reduce((s, g) => s + g.chars, 0)
+
+    // VAD 구간 타임라인을 플랫하게 펼치기 (start~end 배열)
+    const timeline = []
+    for (const r of speechRegions) timeline.push({ start: r.start, end: r.end, dur: r.end - r.start })
+
+    // 각 자막 줄이 차지할 시간 = (글자 수 / 전체 글자) * 전체 음성 시간
+    const segments = []
+    let timelineIdx = 0
+    let timelineConsumed = 0   // 현재 VAD 구간에서 소비된 시간
+
+    for (let i = 0; i < lineGroups.length; i++) {
+      const g = lineGroups[i]
+      // 이 줄에 할당할 음성 시간
+      let allocSec = (g.chars / totalChars) * totalSpeechDur
+      const MIN_DUR = 0.5
+      if (allocSec < MIN_DUR) allocSec = MIN_DUR
+
+      // VAD 구간에서 allocSec만큼 소비하며 start/end 결정
+      let segStart = null
+      let remaining = allocSec
+
+      while (remaining > 0 && timelineIdx < timeline.length) {
+        const region = timeline[timelineIdx]
+        const availInRegion = region.dur - timelineConsumed
+        const regionAbsStart = region.start + timelineConsumed
+
+        if (segStart === null) segStart = regionAbsStart
+
+        if (availInRegion <= remaining) {
+          remaining -= availInRegion
+          timelineConsumed = 0
+          timelineIdx++
+        } else {
+          timelineConsumed += remaining
+          remaining = 0
+        }
+      }
+
+      // VAD 구간 소진됐어도 남은 자막은 duration 안에 배치
+      if (segStart === null) {
+        segStart = segments.length > 0 ? segments[segments.length - 1].end : 0
+      }
+      const segEnd = Math.min(segStart + allocSec, duration)
+
+      segments.push({
+        lines: [g.text],
+        text:  g.text,
+        start: segStart,
+        end:   segEnd,
+      })
+    }
+
+    // 마지막 세그먼트 duration 클램프
+    if (segments.length > 0 && segments[segments.length - 1].end > duration) {
+      segments[segments.length - 1].end = duration
+    }
+
+    return segments
+  },
+
+  // ── 자막 세그먼트 빌더 (폴백용 — VAD 없을 때) ───────────────────
   // 대본 → 의미 단위 분리 → 최대 너비 기준 줄바꿈 → 타임코드 할당
   // 한 줄당 최대 14자, 한 번에 1줄만 표시 (이탈 방지)
   _buildSubtitleSegments(script, duration, ctx, fontSize, canvasW, subtitleOffset = 0) {
