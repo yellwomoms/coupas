@@ -2337,78 +2337,65 @@ const App = {
     const totalFrames = Math.ceil(duration * FPS)
 
     if (hasBgVideo) {
-      // ── bgVideo 있을 때: ended 이벤트로 루프, encodedFrames/FPS로 timestamp ─
-      // loop=false → ended 시 currentTime=0 & play() 재시작으로 원본 속도 유지
+      // ── bgVideo 있을 때: seek 방식 (프레임 단위 정확 캡처) ──────
+      // ★ 설계: 각 프레임 번호 f → 대응 bgVideo 시간 = (f/FPS) % vidDur
+      //   seeked 이벤트 대기 후 drawImage → VideoFrame 인코딩
+      //   → 원본 영상 속도 100% 정확 재현
+      bgVideo.pause()
       bgVideo.loop = false
-      bgVideo.currentTime = 0
-      await new Promise(r => {
-        bgVideo.onseeked = () => { bgVideo.onseeked = null; r() }
-        setTimeout(r, 800)
+      const vidDur = bgVideo.duration || duration
+
+      // seek 헬퍼: t초로 이동 후 seeked 대기 (최대 300ms)
+      const seekTo = (t) => new Promise(r => {
+        const onSeeked = () => { bgVideo.removeEventListener('seeked', onSeeked); r() }
+        bgVideo.addEventListener('seeked', onSeeked)
+        bgVideo.currentTime = t
+        setTimeout(r, 300)  // 타임아웃 안전장치
       })
 
-      // ended 이벤트: 루프 재생 처리
-      bgVideo.onended = () => {
-        bgVideo.currentTime = 0
-        bgVideo.play().catch(() => {})
-      }
-      bgVideo.play().catch(() => {})
+      // 첫 프레임 seek
+      await seekTo(0)
 
-      let encodedFrames = 0
+      for (let f = 0; f < totalFrames; f++) {
+        if (this._renderCancelFlag) { videoEncoder.close(); muxer.finalize(); return null }
 
-      await new Promise((resolve) => {
-        const encodeFrame = () => {
-          if (this._renderCancelFlag) {
-            bgVideo.onended = null
-            videoEncoder.close(); muxer.finalize(); resolve(); return
-          }
-          if (encodedFrames >= totalFrames) {
-            bgVideo.onended = null
-            resolve(); return
-          }
-
-          // 백프레셔: 큐가 차면 bgVideo pause 후 대기
-          if (videoEncoder.encodeQueueSize > 15) {
-            bgVideo.pause()
-            const waitAndResume = () => {
-              if (videoEncoder.encodeQueueSize <= 6) {
-                bgVideo.play().catch(() => {})
-                requestAnimationFrame(encodeFrame)
-              } else {
-                setTimeout(waitAndResume, 8)
-              }
-            }
-            setTimeout(waitAndResume, 8)
-            return
-          }
-
-          const vw = bgVideo.videoWidth  || W
-          const vh = bgVideo.videoHeight || H
-          const scale = Math.max(W / vw, H / vh)
-          const dw = vw * scale, dh = vh * scale
-          ctx.drawImage(bgVideo, (W - dw) / 2, (H - dh) / 2, dw, dh)
-
-          const t = encodedFrames / FPS
-          const seg = segments.find(s => t >= s.start && t < s.end)
-          if (seg) {
-            const lines = seg.text.split('\n').filter(Boolean)
-            this._drawSubtitle(ctx, lines, W, H, fontSize, fontColor, hasBgBar, position, fontFamily, bgColor)
-          }
-
-          const timestamp = Math.round(encodedFrames / FPS * 1_000_000)
-          const frame = new VideoFrame(canvas, { timestamp, duration: Math.round(1_000_000 / FPS) })
-          videoEncoder.encode(frame, { keyFrame: encodedFrames % (FPS * 2) === 0 })
-          frame.close()
-          encodedFrames++
-
-          if (encodedFrames % 15 === 0) {
-            const pct = 30 + (encodedFrames / totalFrames) * 60
-            setProgress(pct, `프레임 렌더링... ${encodedFrames}/${totalFrames}`)
-          }
-
-          requestAnimationFrame(encodeFrame)
+        // 인코더 큐 백프레셔
+        while (videoEncoder.encodeQueueSize > 10) {
+          await new Promise(r => setTimeout(r, 5))
         }
-        requestAnimationFrame(encodeFrame)
-      })
+
+        // bgVideo 위치: 영상 길이를 초과하면 루프
+        const vidT = (f / FPS) % vidDur
+        // 이전 프레임과 위치가 다를 때만 seek (1프레임 이상 차이)
+        const prevVidT = ((f - 1) / FPS) % vidDur
+        if (f === 0 || Math.abs(vidT - bgVideo.currentTime) > 0.01 || vidT < prevVidT) {
+          await seekTo(vidT)
+        }
+
+        const vw = bgVideo.videoWidth  || W
+        const vh = bgVideo.videoHeight || H
+        const scale = Math.max(W / vw, H / vh)
+        const dw = vw * scale, dh = vh * scale
+        ctx.drawImage(bgVideo, (W - dw) / 2, (H - dh) / 2, dw, dh)
+
+        const t = f / FPS
+        const seg = segments.find(s => t >= s.start && t < s.end)
+        if (seg) {
+          const lines = seg.text.split('\n').filter(Boolean)
+          this._drawSubtitle(ctx, lines, W, H, fontSize, fontColor, hasBgBar, position, fontFamily, bgColor)
+        }
+
+        const timestamp = Math.round(f / FPS * 1_000_000)
+        const frame = new VideoFrame(canvas, { timestamp, duration: Math.round(1_000_000 / FPS) })
+        videoEncoder.encode(frame, { keyFrame: f % (FPS * 2) === 0 })
+        frame.close()
+
+        if (f % 15 === 0) {
+          const pct = 30 + (f / totalFrames) * 60
+          setProgress(pct, `프레임 렌더링... ${f}/${totalFrames}`)
+          if (f % 60 === 0) await new Promise(r => setTimeout(r, 0))
+        }
+      }
 
     } else {
       // ── bgVideo 없을 때: setTimeout yield 오프라인 렌더링 ────────
@@ -2644,26 +2631,31 @@ const App = {
   },
 
   // ── VAD 기반 자막 세그먼트 빌더 ────────────────────────────────
-  // 실제 음성 구간을 자막 줄에 1:1 매핑 (VAD 문장 단위 정밀 싱크)
+  // VAD 기반 자막 싱크 - 무음 경계를 자막 전환 타이밍으로 사용
   _buildSubtitleSegmentsFromSpeech(script, duration, ctx, fontSize, canvasW, speechRegions) {
-    // 1) 텍스트 → 줄 단위 분할 (기존 로직 재사용)
+    // VAD 구간이 없거나 너무 짧으면 CPS 기반 폴백
+    const totalSpeechDur = speechRegions.reduce((s, r) => s + (r.end - r.start), 0)
+    if (speechRegions.length === 0 || totalSpeechDur < 1.0) {
+      return this._buildSubtitleSegments(script, duration, ctx, fontSize, canvasW, 0)
+    }
+
+    // ── 1) 자막 줄 목록 생성 ──────────────────────────────────────
     const SAFE_W = canvasW - 120
     const MAX_LINE_CHARS = 14
     ctx.font = `bold ${fontSize}px 'Apple SD Gothic Neo','Noto Sans KR',sans-serif`
 
     const wrapText = (text) => {
       const words = text.split(' ')
-      const lines = []
+      const lines = [], result = []
       let cur = ''
       for (const word of words) {
         if (!word) continue
-        const candidate = cur ? cur + ' ' + word : word
-        if (cur && (candidate.length > MAX_LINE_CHARS || ctx.measureText(candidate).width > SAFE_W)) {
+        const cand = cur ? cur + ' ' + word : word
+        if (cur && (cand.length > MAX_LINE_CHARS || ctx.measureText(cand).width > SAFE_W)) {
           lines.push(cur); cur = word
-        } else { cur = candidate }
+        } else cur = cand
       }
       if (cur) lines.push(cur)
-      const result = []
       for (const line of lines) {
         if (line.length <= MAX_LINE_CHARS && ctx.measureText(line).width <= SAFE_W) {
           result.push(line)
@@ -2671,9 +2663,9 @@ const App = {
           let tmp = ''
           for (const ch of line) {
             const test = tmp + ch
-            if ((test.replace(/\s/g, '').length > MAX_LINE_CHARS || ctx.measureText(test).width > SAFE_W) && tmp.length > 0) {
+            if ((test.replace(/\s/g,'').length > MAX_LINE_CHARS || ctx.measureText(test).width > SAFE_W) && tmp) {
               result.push(tmp); tmp = ch
-            } else { tmp = test }
+            } else tmp = test
           }
           if (tmp) result.push(tmp)
         }
@@ -2681,105 +2673,71 @@ const App = {
       return result.length > 0 ? result : [text]
     }
 
-    // 대본 → 청크(문장) 분리
     const rawLines = script.trim().split('\n').filter(l => l.trim())
     const chunks = []
     for (const line of rawLines) {
-      const parts = line.split(/(?<=[.!?~。！？])\s*/)
-      for (const p of parts) { if (p.trim()) chunks.push(p.trim()) }
+      for (const p of line.split(/(?<=[.!?~。！？])\s*/)) { if (p.trim()) chunks.push(p.trim()) }
     }
     if (chunks.length === 0) chunks.push(script.trim())
 
-    // 줄 단위 그룹 생성
     const lineGroups = []
     for (const chunk of chunks) {
       for (const line of wrapText(chunk)) {
-        const chars = line.replace(/\s/g, '').length || 1
-        lineGroups.push({ text: line, chars })
+        lineGroups.push({ text: line, chars: line.replace(/\s/g,'').length || 1 })
       }
     }
     if (lineGroups.length === 0) return []
 
-    // 2) VAD 구간이 없거나 너무 짧으면 → 균등 분배 폴백
-    const totalSpeechDur = speechRegions.reduce((s, r) => s + (r.end - r.start), 0)
-    if (speechRegions.length === 0 || totalSpeechDur < 1.0) {
-      return this._buildSubtitleSegments(script, duration, ctx, fontSize, canvasW, 0.3)
-    }
-
-    // 3) VAD 버스트를 자막 줄에 1:1 매핑 ──────────────────────────
-    // ★ 핵심 아이디어: VAD로 감지한 N개 버스트 ↔ 자막 N줄 직접 매핑
-    // 버스트 수 != 자막 줄 수인 경우 → 비율로 조정
+    const nLines = lineGroups.length
     const nBursts = speechRegions.length
-    const nLines  = lineGroups.length
 
+    // ── 2) 각 자막 줄에 VAD 타임라인 배분 ───────────────────────
+    // 전체 글자 수에 비례하여 VAD 타임라인(연속 시간축)을 분할
+    // VAD 무음 구간은 건너뛰고 음성 구간만 사용
+    const totalChars = lineGroups.reduce((s, g) => s + g.chars, 0)
+
+    // VAD를 연속 시간축으로 펼침
+    const vadTimeline = []  // {start, end} 절대 시간
+    for (const r of speechRegions) vadTimeline.push({ start: r.start, end: r.end })
+
+    // 각 자막 줄의 글자 수 비율만큼 VAD 타임라인에서 시간 배분
     const segments = []
+    let vadIdx = 0
+    let vadConsumed = 0  // 현재 VAD 구간에서 소비된 초
 
-    if (nBursts >= nLines) {
-      // ── 버스트가 자막 줄 수보다 많거나 같음 → 인접 버스트를 묶어서 1줄에 배정
-      // 각 자막 줄이 가져갈 버스트 수 = floor(nBursts / nLines)
-      const burstsPerLine = Math.max(1, Math.round(nBursts / nLines))
-      let burstIdx = 0
-      for (let i = 0; i < nLines; i++) {
-        const startBurst = speechRegions[burstIdx]
-        const endBurstIdx = Math.min(burstIdx + burstsPerLine - 1, nBursts - 1)
-        const endBurst = speechRegions[endBurstIdx]
-        const segStart = startBurst ? startBurst.start : (segments.length > 0 ? segments[segments.length-1].end : 0)
-        const segEnd   = endBurst   ? Math.min(endBurst.end, duration) : duration
-        segments.push({
-          lines: [lineGroups[i].text],
-          text:  lineGroups[i].text,
-          start: segStart,
-          end:   segEnd,
-        })
-        burstIdx = endBurstIdx + 1
-        if (burstIdx >= nBursts) burstIdx = nBursts - 1
-      }
-    } else {
-      // ── 버스트가 자막 줄 수보다 적음 → 각 버스트를 글자 수 비율로 나눠 배정
-      // 글자 수 누적으로 자막 줄을 버스트에 순차 배정
-      const totalChars = lineGroups.reduce((s, g) => s + g.chars, 0)
-      let lineIdx = 0
-      for (let bi = 0; bi < nBursts; bi++) {
-        const burst = speechRegions[bi]
-        const burstDur = burst.end - burst.start
-        // 이 버스트에 속할 자막 줄 수 = 전체 줄 * (이 버스트 길이 / 전체 버스트 길이)
-        const fracLines = Math.max(1, Math.round((burstDur / totalSpeechDur) * nLines))
-        const endLineIdx = Math.min(lineIdx + fracLines, nLines)
-        const charsInGroup = lineGroups.slice(lineIdx, endLineIdx).reduce((s, g) => s + g.chars, 0) || 1
-        let elapsed = burst.start
-        for (let li = lineIdx; li < endLineIdx; li++) {
-          const frac = lineGroups[li].chars / charsInGroup
-          const segStart = elapsed
-          const segEnd   = Math.min(elapsed + burstDur * frac, duration)
-          segments.push({
-            lines: [lineGroups[li].text],
-            text:  lineGroups[li].text,
-            start: segStart,
-            end:   segEnd,
-          })
-          elapsed = segEnd
+    for (let i = 0; i < nLines; i++) {
+      const g = lineGroups[i]
+      let alloc = Math.max(0.4, (g.chars / totalChars) * totalSpeechDur)
+
+      let segStart = null
+      let remaining = alloc
+
+      while (remaining > 0.001 && vadIdx < vadTimeline.length) {
+        const vad = vadTimeline[vadIdx]
+        const avail = (vad.end - vad.start) - vadConsumed
+        const absStart = vad.start + vadConsumed
+
+        if (segStart === null) segStart = absStart
+
+        if (avail <= remaining) {
+          remaining -= avail
+          vadConsumed = 0
+          vadIdx++
+        } else {
+          vadConsumed += remaining
+          remaining = 0
         }
-        lineIdx = endLineIdx
-        if (lineIdx >= nLines) break
       }
-      // 남은 자막 줄 처리 (버스트 소진 후 남은 경우)
-      const lastEnd = segments.length > 0 ? segments[segments.length - 1].end : 0
-      const remainDur = (duration - lastEnd) / Math.max(1, nLines - lineIdx)
-      for (let li = lineIdx; li < nLines; li++) {
-        const segStart = lastEnd + (li - lineIdx) * remainDur
-        segments.push({
-          lines: [lineGroups[li].text],
-          text:  lineGroups[li].text,
-          start: segStart,
-          end:   Math.min(segStart + remainDur, duration),
-        })
-      }
+
+      if (segStart === null) segStart = segments.length > 0 ? segments[segments.length-1].end : 0
+      const segEnd = Math.min(segStart + alloc, duration)
+
+      segments.push({ lines: [g.text], text: g.text, start: Math.max(0, segStart), end: segEnd })
     }
 
-    // 마지막 세그먼트 duration 클램프
-    if (segments.length > 0 && segments[segments.length - 1].end > duration) {
-      segments[segments.length - 1].end = duration
-    }
+    // 마지막 클램프
+    if (segments.length > 0 && segments[segments.length-1].end > duration)
+      segments[segments.length-1].end = duration
 
     return segments
   },
@@ -3439,69 +3397,52 @@ const App = {
       const totalFrames = Math.ceil(estimatedDuration * FPS)
 
       if (hasBgVideo) {
-        // ★ ended 이벤트 루프 + encodedFrames/FPS timestamp (안정적 종료 보장)
+        // ★ seek 방식으로 통일 (NoAudio도 동일 원칙)
+        bgVideo.pause()
         bgVideo.loop = false
-        bgVideo.currentTime = 0
-        await new Promise(r => {
-          bgVideo.onseeked = () => { bgVideo.onseeked = null; r() }
-          setTimeout(r, 800)
+        const vidDurNA = bgVideo.duration || estimatedDuration
+
+        const seekToNA = (t) => new Promise(r => {
+          const onSeeked = () => { bgVideo.removeEventListener('seeked', onSeeked); r() }
+          bgVideo.addEventListener('seeked', onSeeked)
+          bgVideo.currentTime = t
+          setTimeout(r, 300)
         })
+        await seekToNA(0)
 
-        bgVideo.onended = () => {
-          bgVideo.currentTime = 0
-          bgVideo.play().catch(() => {})
-        }
-        bgVideo.play().catch(() => {})
+        for (let fna = 0; fna < totalFrames; fna++) {
+          if (this._renderCancelFlag) { videoEncoder.close(); muxer.finalize(); return null }
 
-        let encodedFramesNA = 0
-
-        await new Promise((resolve) => {
-          const encodeFrame = () => {
-            if (this._renderCancelFlag) {
-              bgVideo.onended = null
-              videoEncoder.close(); muxer.finalize(); resolve(); return
-            }
-            if (encodedFramesNA >= totalFrames) {
-              bgVideo.onended = null
-              resolve(); return
-            }
-
-            // 백프레셔: 큐 차면 bgVideo pause 후 재개
-            if (videoEncoder.encodeQueueSize > 15) {
-              bgVideo.pause()
-              const waitAndResume = () => {
-                if (videoEncoder.encodeQueueSize <= 6) {
-                  bgVideo.play().catch(() => {})
-                  requestAnimationFrame(encodeFrame)
-                } else { setTimeout(waitAndResume, 8) }
-              }
-              setTimeout(waitAndResume, 8); return
-            }
-
-            const vw = bgVideo.videoWidth || W, vh = bgVideo.videoHeight || H
-            const scale = Math.max(W / vw, H / vh)
-            ctx.drawImage(bgVideo, (W - vw*scale)/2, (H - vh*scale)/2, vw*scale, vh*scale)
-
-            const t = encodedFramesNA / FPS
-            const seg = segments.find(s => t >= s.start && t < s.end)
-            if (seg) {
-              const lines = seg.text ? seg.text.split('\n').filter(Boolean) : (seg.lines || [])
-              this._drawSubtitle(ctx, lines, W, H, fontSize, fontColor, hasBgBar, position, fontFamily, bgColor)
-            }
-
-            const timestamp = Math.round(encodedFramesNA / FPS * 1_000_000)
-            const frame = new VideoFrame(canvas, { timestamp, duration: Math.round(1_000_000 / FPS) })
-            videoEncoder.encode(frame, { keyFrame: encodedFramesNA % (FPS * 2) === 0 })
-            frame.close()
-            encodedFramesNA++
-
-            if (encodedFramesNA % 15 === 0)
-              setProgress(10 + (encodedFramesNA / totalFrames) * 82, `프레임 렌더링... ${encodedFramesNA}/${totalFrames}`)
-
-            requestAnimationFrame(encodeFrame)
+          while (videoEncoder.encodeQueueSize > 10) {
+            await new Promise(r => setTimeout(r, 5))
           }
-          requestAnimationFrame(encodeFrame)
-        })
+
+          const vidTNA = (fna / FPS) % vidDurNA
+          const prevVidTNA = ((fna - 1) / FPS) % vidDurNA
+          if (fna === 0 || Math.abs(vidTNA - bgVideo.currentTime) > 0.01 || vidTNA < prevVidTNA) {
+            await seekToNA(vidTNA)
+          }
+
+          const vw = bgVideo.videoWidth || W, vh = bgVideo.videoHeight || H
+          const scale = Math.max(W / vw, H / vh)
+          ctx.drawImage(bgVideo, (W - vw*scale)/2, (H - vh*scale)/2, vw*scale, vh*scale)
+
+          const t = fna / FPS
+          const seg = segments.find(s => t >= s.start && t < s.end)
+          if (seg) {
+            const lines = seg.text ? seg.text.split('\n').filter(Boolean) : (seg.lines || [])
+            this._drawSubtitle(ctx, lines, W, H, fontSize, fontColor, hasBgBar, position, fontFamily, bgColor)
+          }
+
+          const timestamp = Math.round(fna / FPS * 1_000_000)
+          const frame = new VideoFrame(canvas, { timestamp, duration: Math.round(1_000_000 / FPS) })
+          videoEncoder.encode(frame, { keyFrame: fna % (FPS * 2) === 0 })
+          frame.close()
+
+          if (fna % 15 === 0)
+            setProgress(10 + (fna / totalFrames) * 82, `프레임 렌더링... ${fna}/${totalFrames}`)
+          if (fna % 60 === 0) await new Promise(r => setTimeout(r, 0))
+        }
 
       } else {
         // 그라데이션: 오프라인 렌더링 + 백프레셔 대기
