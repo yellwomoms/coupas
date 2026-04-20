@@ -63,6 +63,54 @@ INSERT OR IGNORE INTO subtitle_presets (id, name, font_family, font_size, font_c
 (4, '여기어때 잘난체', 'GmarketSansBold', 40, '#FFD700', 'rgba(0,0,0,0.0)', 'middle_center', '#FFFFFF', '#000000', 4, 0),
 (5, '나눔 명조 감성', 'NanumMyeongjo', 34, '#FFFFFF', 'rgba(0,0,0,0.6)', 'bottom_bar', '#FFB7C5', '#333333', 1, 0);
 
+-- 자막 프리셋 추가 (손글씨 폰트 2종 포함)
+INSERT OR IGNORE INTO subtitle_presets (id, name, font_family, font_size, font_color, bg_color, layout, highlight_color, stroke_color, stroke_width, is_default) VALUES
+(6, '나눔손글씨 감성체', 'Nanum Pen Script', 40, '#FFFFFF', 'rgba(0,0,0,0.55)', 'bottom_bar', '#FFD700', '#000000', 2, 0),
+(7, '나눔손글씨 붓글씨', 'Nanum Brush Script', 42, '#FFFDE7', 'rgba(0,0,0,0.0)', 'bottom_center', '#FF6B6B', '#000000', 3, 0);
+
+-- production_presets 기본 시드 데이터 (자막+성우+감정+속도 통합 프리셋)
+INSERT OR IGNORE INTO production_presets
+  (id, name, description,
+   subtitle_font, subtitle_font_size, subtitle_position,
+   subtitle_font_color, subtitle_bg_color, subtitle_bg_opacity,
+   subtitle_has_bg_bar, subtitle_stroke_color, subtitle_stroke_width,
+   tts_voice_id, tts_voice_name, tts_emotion, tts_speed, is_default)
+VALUES
+-- 1) 기본 (엄마·공감형) — 흰 하단 바, 문정 성우, 감정 자동
+(1, '🌸 기본 — 엄마·공감형', '따뜻한 30대 엄마 화자용 기본 프리셋',
+ 'NanumSquareRound', 36, 'bottom',
+ '#FFFFFF', 'rgba(0,0,0,0.65)', 0.65,
+ 1, '#000000', 2,
+ 'tc_68f9c6a72f0f04a417bb136f', '문정 (Moonjung)', 'happy', 1.0, 1),
+
+-- 2) 트렌디 (누나·언니) — 반투명 없이 외곽선, 크리스틴 성우, 업비트
+(2, '✨ 트렌디 — 누나·MZ감성', 'MZ 트렌디 여성 화자 + 업비트 감정',
+ 'BMJUA', 38, 'bottom',
+ '#FFFFFF', 'rgba(0,0,0,0.0)', 0.0,
+ 0, '#000000', 3,
+ 'tc_662a15c1e31aab9a774b3b31', '크리스틴 (Kristen)', 'toneup', 1.1, 0),
+
+-- 3) 손글씨 감성 — 나눔 펜 스크립트, 차분한 톤
+(3, '✍️ 손글씨 — 나눔펜 감성', '손글씨 폰트 + 차분한 감정, 감성적 분위기',
+ 'Nanum Pen Script', 40, 'bottom',
+ '#FFFDE7', 'rgba(0,0,0,0.55)', 0.55,
+ 1, '#333333', 1,
+ 'tc_68f9c6a72f0f04a417bb136f', '문정 (Moonjung)', 'normal', 0.95, 0),
+
+-- 4) 붓글씨 강조 — 나눔 브러시, 에너지틱
+(4, '🖌️ 붓글씨 — 에너지·강조', '붓글씨체 + 강조 감정으로 임팩트 있는 영상',
+ 'Nanum Brush Script', 42, 'middle',
+ '#FFD700', 'rgba(0,0,0,0.0)', 0.0,
+ 0, '#000000', 3,
+ 'tc_68d4b115f0486108a7eefb37', '강일 (Kangil)', 'toneup', 1.15, 0),
+
+-- 5) 전문가 신뢰형 — 굵은 고딕, 차분한 설명
+(5, '🔬 전문가 — 신뢰·정보형', '전문가 화자용, 차분하고 신뢰감 있는 설정',
+ 'NanumSquareExtraBold', 34, 'bottom',
+ '#FFFFFF', 'rgba(0,0,0,0.75)', 0.75,
+ 1, '#000000', 2,
+ 'tc_68785db8ba9cd7503f27d921', '고운 (Gowoon)', 'normal', 0.9, 0);
+
 -- TTS 보이스 프리셋 시드 데이터 (Typecast 한국어 성우)
 -- voice_id: Typecast GET /v2/voices 로 실제 ID 확인 후 교체 필요
 -- 아래 ID는 Typecast 공식 문서 예시 기반 플레이스홀더

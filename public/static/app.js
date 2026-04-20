@@ -36,8 +36,34 @@ const App = {
     currentAudio: null,
     playbackSpeed: 1.0,           // 오디오 재생 속도
     subtitleColor: '#ffffff',     // 자막 글자색
-    subtitleBgBar: true           // 자막 배경 바
+    subtitleBgBar: true,          // 자막 배경 바
+
+    // ── 자막 상세 설정 ─────────────────────────────────────
+    subtitleFont: 'NanumSquareRound',   // 폰트
+    subtitleFontSize: 36,               // 글자 크기
+    subtitlePosition: 'bottom',         // 위치: bottom|middle|top
+    subtitleFontColor: '#FFFFFF',       // 글자 색
+    subtitleBgColor: 'rgba(0,0,0,0.65)', // 배경 색
+    subtitleBgOpacity: 0.65,            // 배경 불투명도
+    subtitleStrokeColor: '#000000',     // 외곽선 색
+    subtitleStrokeWidth: 2,             // 외곽선 두께
+
+    // ── 제작 프리셋 ────────────────────────────────────────
+    productionPresets: [],
+    selectedProductionPresetId: null
   },
+
+  // ── 사용 가능한 폰트 목록 ──────────────────────────────────────
+  fontOptions: [
+    { value: 'NanumSquareRound',      label: '나눔스퀘어 라운드',    sample: '가나다ABC',  category: '고딕' },
+    { value: 'NanumSquareExtraBold',  label: '나눔스퀘어 ExtraBold', sample: '가나다ABC',  category: '고딕' },
+    { value: 'BMJUA',                 label: '배민 주아체',           sample: '가나다ABC',  category: '배민' },
+    { value: 'GmarketSansBold',       label: 'G마켓산스 Bold',        sample: '가나다ABC',  category: '고딕' },
+    { value: 'NanumMyeongjo',         label: '나눔명조',              sample: '가나다ABC',  category: '명조' },
+    { value: 'Nanum Pen Script',        label: '나눔손글씨 펜',         sample: '가나다ABC',  category: '손글씨', handwriting: true },
+    { value: 'Nanum Brush Script',      label: '나눔손글씨 붓',         sample: '가나다ABC',  category: '손글씨', handwriting: true },
+    { value: 'sans-serif',            label: '기본 고딕 (시스템)',    sample: '가나다ABC',  category: '기본' }
+  ],
 
   // ── Typecast 감정 옵션 ─────────────────────────────────────────
   emotionOptions: [
@@ -67,18 +93,20 @@ const App = {
 
   async loadInitialData() {
     try {
-      const [personasRes, presetsRes, voicesRes, settingsRes, jobsRes] = await Promise.all([
+      const [personasRes, presetsRes, voicesRes, settingsRes, jobsRes, prodPresetsRes] = await Promise.all([
         axios.get('/api/personas'),
         axios.get('/api/subtitle-presets'),
         axios.get('/api/tts-voices'),
         axios.get('/api/settings'),
-        axios.get('/api/jobs')
+        axios.get('/api/jobs'),
+        axios.get('/api/production-presets')
       ])
       this.state.personas = personasRes.data.data || []
       this.state.subtitlePresets = presetsRes.data.data || []
       this.state.ttsVoices = voicesRes.data.data || []
       this.state.settings = settingsRes.data.data || {}
       this.state.jobs = jobsRes.data.data || []
+      this.state.productionPresets = prodPresetsRes.data.data || []
 
       // 기본값 세팅
       if (this.state.subtitlePresets.length > 0) {
@@ -88,6 +116,12 @@ const App = {
       if (this.state.ttsVoices.length > 0) {
         const def = this.state.ttsVoices.find(v => v.is_default) || this.state.ttsVoices[0]
         this.state.form.tts_voice_id = def.id
+      }
+
+      // 기본 제작 프리셋 적용
+      if (this.state.productionPresets.length > 0) {
+        const defPreset = this.state.productionPresets.find(p => p.is_default) || this.state.productionPresets[0]
+        this.applyProductionPreset(defPreset, false)
       }
 
       this.rerender()
@@ -780,45 +814,141 @@ const App = {
                 ${state.bgVideoFile ? '업로드된 영상 + 자막 + TTS 오디오가 합성됩니다' : '기본 그라데이션 배경 + 자막 + TTS 오디오가 합성됩니다'}
               </div>
 
-              <!-- 자막 설정 -->
-              <div style="background:var(--bg-secondary);border:1px solid var(--border);border-radius:8px;padding:0.75rem;margin-bottom:0.85rem;text-align:left">
-                <div style="font-size:0.75rem;font-weight:600;color:var(--text-primary);margin-bottom:0.6rem">
-                  <i class="fas fa-closed-captioning" style="color:var(--accent-light);margin-right:5px"></i>자막 설정
+              <!-- 자막 설정 (확장판) -->
+              <div style="background:var(--bg-secondary);border:1px solid var(--border);border-radius:10px;padding:0.85rem;margin-bottom:0.85rem;text-align:left">
+                <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:0.75rem">
+                  <div style="font-size:0.78rem;font-weight:700;color:var(--text-primary);display:flex;align-items:center;gap:0.4rem">
+                    <i class="fas fa-closed-captioning" style="color:var(--accent-light)"></i>자막 · TTS 설정
+                  </div>
+                  <!-- 프리셋 저장 버튼 -->
+                  <button onclick="App.openSavePresetModal()" style="display:inline-flex;align-items:center;gap:0.3rem;background:rgba(16,185,129,0.1);border:1px solid rgba(16,185,129,0.3);color:#10b981;padding:0.25rem 0.65rem;border-radius:6px;cursor:pointer;font-size:0.7rem;font-weight:600">
+                    <i class="fas fa-save"></i> 프리셋 저장
+                  </button>
                 </div>
-                <div style="display:grid;grid-template-columns:1fr 1fr;gap:0.5rem">
+
+                <!-- 📌 제작 프리셋 불러오기 -->
+                ${this.state.productionPresets.length > 0 ? `
+                <div style="margin-bottom:0.75rem">
+                  <label style="font-size:0.7rem;color:var(--text-muted);font-weight:600;display:block;margin-bottom:0.35rem"><i class="fas fa-bookmark" style="margin-right:3px;color:#a78bfa"></i>저장된 프리셋 불러오기</label>
+                  <div style="display:flex;gap:0.35rem;flex-wrap:wrap">
+                    ${this.state.productionPresets.map(p => `
+                      <button onclick="App.loadProductionPreset(${p.id})"
+                        style="display:inline-flex;align-items:center;gap:0.25rem;padding:0.3rem 0.6rem;border-radius:6px;cursor:pointer;font-size:0.7rem;font-weight:600;transition:all 0.15s;
+                          background:${this.state.selectedProductionPresetId===p.id?'rgba(124,58,237,0.2)':'var(--bg-card)'};
+                          border:1px solid ${this.state.selectedProductionPresetId===p.id?'#7c3aed':'var(--border)'};
+                          color:${this.state.selectedProductionPresetId===p.id?'#a78bfa':'var(--text-secondary)'}">
+                        ${p.name}
+                      </button>
+                    `).join('')}
+                  </div>
+                </div>
+                ` : ''}
+
+                <!-- 자막 폰트 선택 -->
+                <div style="margin-bottom:0.65rem">
+                  <label style="font-size:0.68rem;color:var(--text-muted);font-weight:600;display:block;margin-bottom:0.3rem">폰트 선택</label>
+                  <div style="display:grid;grid-template-columns:1fr 1fr;gap:0.3rem" id="fontPickerGrid">
+                    ${this.fontOptions.map(f => `
+                      <div onclick="App.setSubtitleFont('${f.value}')"
+                        style="padding:0.45rem 0.6rem;border-radius:7px;cursor:pointer;border:1px solid ${(state.subtitleFont||'NanumSquareRound')===f.value?'#7c3aed':'var(--border)'};background:${(state.subtitleFont||'NanumSquareRound')===f.value?'rgba(124,58,237,0.15)':'var(--bg-card)'};transition:all 0.15s">
+                        <div style="font-size:0.62rem;color:${(state.subtitleFont||'NanumSquareRound')===f.value?'#a78bfa':'var(--text-muted)'};margin-bottom:0.2rem;display:flex;align-items:center;gap:0.25rem">
+                          ${f.handwriting?'✍️ ':''}${f.category}
+                          ${f.handwriting?'<span style="font-size:0.58rem;color:#f59e0b;background:rgba(245,158,11,0.1);padding:0.08rem 0.3rem;border-radius:3px;border:1px solid rgba(245,158,11,0.2)">손글씨</span>':''}
+                        </div>
+                        <div style="font-family:${f.value};font-size:0.78rem;color:${(state.subtitleFont||'NanumSquareRound')===f.value?'var(--text-primary)':'var(--text-secondary)'};">${f.label}</div>
+                        <div style="font-family:${f.value};font-size:0.85rem;color:#a78bfa;margin-top:0.15rem;font-weight:bold">가나다 ABC 123</div>
+                      </div>
+                    `).join('')}
+                  </div>
+                </div>
+
+                <!-- 글자 크기 + 위치 -->
+                <div style="display:grid;grid-template-columns:1fr 1fr;gap:0.5rem;margin-bottom:0.6rem">
                   <div>
-                    <label style="font-size:0.68rem;color:var(--text-muted)">글자 크기</label>
-                    <select id="subtitleFontSize" style="width:100%;background:var(--bg-card);border:1px solid var(--border);color:var(--text-primary);padding:0.3rem;border-radius:4px;font-size:0.72rem;margin-top:0.2rem">
-                      <option value="28">작게 (28px)</option>
-                      <option value="36" selected>보통 (36px)</option>
-                      <option value="44">크게 (44px)</option>
-                      <option value="52">매우 크게 (52px)</option>
+                    <label style="font-size:0.68rem;color:var(--text-muted);font-weight:600">글자 크기</label>
+                    <select id="subtitleFontSize" style="width:100%;background:var(--bg-card);border:1px solid var(--border);color:var(--text-primary);padding:0.3rem;border-radius:5px;font-size:0.72rem;margin-top:0.2rem"
+                      onchange="App.state.subtitleFontSize=parseInt(this.value)">
+                      <option value="24" ${(state.subtitleFontSize||36)===24?'selected':''}>작게 (24px)</option>
+                      <option value="28" ${(state.subtitleFontSize||36)===28?'selected':''}>약간 작게 (28px)</option>
+                      <option value="36" ${(state.subtitleFontSize||36)===36?'selected':''}>보통 (36px)</option>
+                      <option value="42" ${(state.subtitleFontSize||36)===42?'selected':''}>크게 (42px)</option>
+                      <option value="48" ${(state.subtitleFontSize||36)===48?'selected':''}>매우 크게 (48px)</option>
+                      <option value="56" ${(state.subtitleFontSize||36)===56?'selected':''}>초대형 (56px)</option>
                     </select>
                   </div>
                   <div>
-                    <label style="font-size:0.68rem;color:var(--text-muted)">자막 위치</label>
-                    <select id="subtitlePosition" style="width:100%;background:var(--bg-card);border:1px solid var(--border);color:var(--text-primary);padding:0.3rem;border-radius:4px;font-size:0.72rem;margin-top:0.2rem">
-                      <option value="bottom" selected>하단 (권장)</option>
-                      <option value="middle">중앙</option>
-                      <option value="top">상단</option>
+                    <label style="font-size:0.68rem;color:var(--text-muted);font-weight:600">자막 위치</label>
+                    <select id="subtitlePosition" style="width:100%;background:var(--bg-card);border:1px solid var(--border);color:var(--text-primary);padding:0.3rem;border-radius:5px;font-size:0.72rem;margin-top:0.2rem"
+                      onchange="App.state.subtitlePosition=this.value">
+                      <option value="bottom" ${(state.subtitlePosition||'bottom')==='bottom'?'selected':''}>하단</option>
+                      <option value="middle" ${(state.subtitlePosition||'bottom')==='middle'?'selected':''}>중앙</option>
+                      <option value="top" ${(state.subtitlePosition||'bottom')==='top'?'selected':''}>상단</option>
                     </select>
                   </div>
+                </div>
+
+                <!-- 글자 색 + 커스텀 -->
+                <div style="margin-bottom:0.6rem">
+                  <label style="font-size:0.68rem;color:var(--text-muted);font-weight:600;display:block;margin-bottom:0.3rem">글자 색상</label>
+                  <div style="display:flex;align-items:center;gap:0.4rem;flex-wrap:wrap">
+                    ${['#FFFFFF','#FFFF00','#00FF99','#FF6B6B','#A78BFA','#FBBF24','#34D399','#F97316'].map(c=>`
+                      <div onclick="App.state.subtitleFontColor='${c}';App.state.subtitleColor='${c}';this.closest('.color-swatch-row').querySelectorAll('.cswatch').forEach(d=>d.style.outline='none');this.style.outline='2px solid #7c3aed'"
+                        class="cswatch"
+                        style="width:22px;height:22px;background:${c};border-radius:4px;cursor:pointer;border:2px solid var(--border);outline:${(state.subtitleFontColor||'#FFFFFF')===c||(state.subtitleColor||'#ffffff').toUpperCase()===c?'2px solid #7c3aed':'none'};flex-shrink:0"></div>
+                    `).join('')}
+                    <input type="color" value="${state.subtitleFontColor||'#ffffff'}" title="직접 색 선택"
+                      onchange="App.state.subtitleFontColor=this.value;App.state.subtitleColor=this.value"
+                      style="width:28px;height:22px;padding:1px;border:1px solid var(--border);border-radius:4px;cursor:pointer;background:transparent">
+                  </div>
+                  <div class="color-swatch-row" style="display:none"></div>
+                </div>
+
+                <!-- 배경 바 설정 -->
+                <div style="background:var(--bg-card);border:1px solid var(--border);border-radius:7px;padding:0.6rem;margin-bottom:0.6rem">
+                  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:0.45rem">
+                    <label style="font-size:0.68rem;color:var(--text-muted);font-weight:600">반투명 배경 바</label>
+                    <div style="display:flex;align-items:center;gap:0.35rem">
+                      <input type="checkbox" id="subtitleBgBar" ${state.subtitleBgBar!==false?'checked':''}
+                        onchange="App.state.subtitleBgBar=this.checked"
+                        style="accent-color:#7c3aed;width:14px;height:14px">
+                      <span style="font-size:0.68rem;color:var(--text-secondary)">배경 바 ON</span>
+                    </div>
+                  </div>
+                  ${state.subtitleBgBar !== false ? `
                   <div>
-                    <label style="font-size:0.68rem;color:var(--text-muted)">글자 색상</label>
-                    <div style="display:flex;gap:0.3rem;margin-top:0.3rem">
-                      ${['#ffffff','#ffff00','#00ff99','#ff6b6b','#a78bfa'].map(c=>`
-                        <div onclick="App.state.subtitleColor='${c}';this.parentNode.querySelectorAll('div').forEach(d=>d.style.outline='none');this.style.outline='2px solid #7c3aed'"
-                          style="width:20px;height:20px;background:${c};border-radius:3px;cursor:pointer;border:1px solid var(--border);outline:${(state.subtitleColor??'#ffffff')===c?'2px solid #7c3aed':'none'}"></div>
+                    <label style="font-size:0.65rem;color:var(--text-muted);display:block;margin-bottom:0.25rem">배경 색상 선택</label>
+                    <div style="display:flex;align-items:center;gap:0.35rem;flex-wrap:wrap">
+                      ${[
+                        { label:'검정', color:'rgba(0,0,0,0.65)' },
+                        { label:'진검정', color:'rgba(0,0,0,0.85)' },
+                        { label:'보라', color:'rgba(124,58,237,0.7)' },
+                        { label:'남색', color:'rgba(30,64,175,0.7)' },
+                        { label:'흰색', color:'rgba(255,255,255,0.75)' }
+                      ].map(bg => `
+                        <div onclick="App.state.subtitleBgColor='${bg.color}';this.parentNode.querySelectorAll('div').forEach(d=>d.style.outline='none');this.style.outline='2px solid #7c3aed'"
+                          title="${bg.label}"
+                          style="width:28px;height:18px;background:${bg.color};border:1px solid rgba(255,255,255,0.2);border-radius:3px;cursor:pointer;outline:${(state.subtitleBgColor||'rgba(0,0,0,0.65)')===bg.color?'2px solid #7c3aed':'none'}"></div>
                       `).join('')}
+                      <div style="display:flex;align-items:center;gap:0.25rem;margin-left:auto">
+                        <span style="font-size:0.62rem;color:var(--text-muted)">불투명도</span>
+                        <input type="range" min="0" max="1" step="0.05" value="${state.subtitleBgOpacity||0.65}"
+                          style="width:70px;accent-color:#7c3aed;height:3px"
+                          oninput="App.state.subtitleBgOpacity=parseFloat(this.value);document.getElementById('bgOpacityLabel').textContent=Math.round(this.value*100)+'%'">
+                        <span style="font-size:0.62rem;color:#a78bfa;min-width:28px" id="bgOpacityLabel">${Math.round((state.subtitleBgOpacity||0.65)*100)}%</span>
+                      </div>
                     </div>
                   </div>
-                  <div>
-                    <label style="font-size:0.68rem;color:var(--text-muted)">배경 바</label>
-                    <div style="display:flex;align-items:center;gap:0.4rem;margin-top:0.3rem">
-                      <input type="checkbox" id="subtitleBgBar" ${state.subtitleBgBar!==false?'checked':''} style="accent-color:#7c3aed">
-                      <span style="font-size:0.7rem;color:var(--text-secondary)">반투명 배경 바</span>
-                    </div>
+                  ` : ''}
+                </div>
+
+                <!-- 실시간 자막 미리보기 -->
+                <div style="background:#111;border-radius:8px;padding:0.75rem;position:relative;overflow:hidden;min-height:52px;display:flex;align-items:${(state.subtitlePosition||'bottom')==='top'?'flex-start':(state.subtitlePosition||'bottom')==='middle'?'center':'flex-end'};justify-content:center">
+                  <div style="padding:0.3rem 0.7rem;border-radius:5px;background:${state.subtitleBgBar!==false?(state.subtitleBgColor||'rgba(0,0,0,0.65)'):'transparent'};text-align:center;max-width:90%">
+                    <span style="font-family:${state.subtitleFont||'NanumSquareRound'};font-size:${Math.round((state.subtitleFontSize||36)*0.55)}px;color:${state.subtitleFontColor||'#FFFFFF'};font-weight:bold;text-shadow:1px 1px 2px ${state.subtitleBgBar!==false?'transparent':'#000'};line-height:1.3">
+                      자막 미리보기 텍스트 — ABC 가나다
+                    </span>
                   </div>
+                  <div style="position:absolute;top:4px;left:4px;font-size:0.55rem;color:rgba(255,255,255,0.3)">미리보기</div>
                 </div>
               </div>
 
@@ -1574,8 +1704,10 @@ const App = {
     const bgBarEl    = document.getElementById('subtitleBgBar')
     const fontSize   = parseInt(fontSizeEl?.value || this.state.subtitleFontSize || '36')
     const position   = positionEl?.value || this.state.subtitlePosition || 'bottom'
-    const fontColor  = this.state.subtitleColor || '#ffffff'
+    const fontColor  = this.state.subtitleFontColor || this.state.subtitleColor || '#ffffff'
     const hasBgBar   = bgBarEl ? bgBarEl.checked : (this.state.subtitleBgBar !== false)
+    const fontFamily = this.state.subtitleFont || 'NanumSquareRound'
+    const bgColor    = hasBgBar ? (this.state.subtitleBgColor || 'rgba(0,0,0,0.65)') : 'transparent'
     // 상태에 저장 (재렌더 시 유지)
     this.state.subtitleFontSize = fontSize
     this.state.subtitlePosition = position
@@ -1683,7 +1815,7 @@ const App = {
       // ── 자막 렌더링 ───────────────────────────────────────────
       const seg = segments.find(s => elapsed >= s.start && elapsed < s.end)
       if (seg) {
-        this._drawSubtitle(ctx, seg.lines, W, H, fontSize, fontColor, hasBgBar, position)
+        this._drawSubtitle(ctx, seg.lines, W, H, fontSize, fontColor, hasBgBar, position, fontFamily, bgColor)
       }
 
       if (elapsed < duration + 0.2) {
@@ -1860,7 +1992,7 @@ const App = {
   },
 
   // ── 자막 렌더링 ────────────────────────────────────────────────
-  _drawSubtitle(ctx, lines, W, H, fontSize, fontColor, hasBgBar, position) {
+  _drawSubtitle(ctx, lines, W, H, fontSize, fontColor, hasBgBar, position, fontFamily, bgColor) {
     if (!lines || lines.length === 0) return
 
     const lineH  = Math.round(fontSize * 1.4)  // 줄 간격 (여유롭게)
@@ -1874,7 +2006,8 @@ const App = {
     const SAFE_TOP    = 120
     const SAFE_SIDE   = 40   // 양옆 최소 여백 (9:16에서 크롭 방지)
 
-    ctx.font      = `bold ${fontSize}px 'Apple SD Gothic Neo','Noto Sans KR',sans-serif`
+    const fontStr = fontFamily ? `'${fontFamily}','Apple SD Gothic Neo','Noto Sans KR',sans-serif` : `'Apple SD Gothic Neo','Noto Sans KR',sans-serif`
+    ctx.font      = `bold ${fontSize}px ${fontStr}`
     ctx.textAlign = 'center'
 
     // 가장 넓은 줄의 픽셀 너비 측정
@@ -1902,7 +2035,7 @@ const App = {
       const boxH  = totalH
       const boxX  = W / 2 - boxW / 2
       const boxY  = baseY - fontSize - padY / 2
-      ctx.fillStyle = 'rgba(0,0,0,0.78)'
+      ctx.fillStyle = bgColor || 'rgba(0,0,0,0.78)'
       if (ctx.roundRect) {
         ctx.beginPath()
         ctx.roundRect(boxX, boxY, boxW, boxH, 8)
@@ -2037,6 +2170,189 @@ const App = {
       const d = new Date(dateStr)
       return d.toLocaleString('ko-KR', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
     } catch { return dateStr }
+  },
+
+  // ── 폰트 선택 ─────────────────────────────────────────────────
+  setSubtitleFont(fontValue) {
+    this.state.subtitleFont = fontValue
+    // 폰트 피커 그리드만 재렌더 (전체 rerender 방지)
+    const grid = document.getElementById('fontPickerGrid')
+    if (grid) {
+      this.fontOptions.forEach(f => {
+        // 각 폰트 카드 스타일 업데이트
+      })
+    }
+    this.rerender()
+  },
+
+  // ── 제작 프리셋 불러오기 ──────────────────────────────────────
+  async loadProductionPreset(presetId) {
+    try {
+      const res = await axios.get(`/api/production-presets/${presetId}`)
+      if (!res.data.ok) throw new Error(res.data.error)
+      const p = res.data.data
+      this.applyProductionPreset(p, true)
+      this.showToast(`✅ "${p.name}" 프리셋 적용됨`, 'success')
+    } catch (e) {
+      this.showToast('프리셋 불러오기 실패: ' + e.message, 'error')
+    }
+  },
+
+  applyProductionPreset(p, showRerender = true) {
+    if (!p) return
+    this.state.selectedProductionPresetId = p.id
+
+    // 자막 설정 적용
+    if (p.subtitle_font)       this.state.subtitleFont       = p.subtitle_font
+    if (p.subtitle_font_size)  this.state.subtitleFontSize   = p.subtitle_font_size
+    if (p.subtitle_position)   this.state.subtitlePosition   = p.subtitle_position
+    if (p.subtitle_font_color) {
+      this.state.subtitleFontColor = p.subtitle_font_color
+      this.state.subtitleColor     = p.subtitle_font_color
+    }
+    if (p.subtitle_bg_color)   this.state.subtitleBgColor   = p.subtitle_bg_color
+    if (p.subtitle_bg_opacity !== undefined) this.state.subtitleBgOpacity = p.subtitle_bg_opacity
+    this.state.subtitleBgBar = p.subtitle_has_bg_bar !== 0
+
+    // TTS 설정 적용
+    if (p.tts_emotion) this.state.form.tts_emotion = p.tts_emotion
+    if (p.tts_speed)   this.state.form.tts_speed   = p.tts_speed
+
+    // 성우 설정 적용 (voice_id로 ttsVoices 목록에서 찾기)
+    if (p.tts_voice_id) {
+      const matchedVoice = this.state.ttsVoices.find(v => v.voice_id === p.tts_voice_id)
+      if (matchedVoice) {
+        this.state.form.tts_voice_id = matchedVoice.id
+      }
+    }
+
+    if (showRerender) this.rerender()
+  },
+
+  // ── 제작 프리셋 저장 모달 ──────────────────────────────────────
+  openSavePresetModal() {
+    // 현재 설정을 읽어 모달 표시
+    const state = this.state
+    const modal = document.createElement('div')
+    modal.id = 'savePresetModal'
+    modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.75);z-index:9999;display:flex;align-items:center;justify-content:center;padding:1rem'
+
+    // 선택된 성우 정보
+    const selVoice = this.state.ttsVoices.find(v => v.id === state.form.tts_voice_id)
+    const voiceId  = selVoice?.voice_id || ''
+    const voiceName = selVoice?.name || ''
+
+    modal.innerHTML = `
+      <div style="background:var(--bg-card);border:1px solid var(--border);border-radius:14px;padding:1.5rem;max-width:420px;width:100%;max-height:90vh;overflow-y:auto">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:1rem">
+          <div style="font-size:1rem;font-weight:700;color:var(--text-primary);display:flex;align-items:center;gap:0.5rem">
+            <i class="fas fa-bookmark" style="color:#a78bfa"></i> 제작 프리셋 저장
+          </div>
+          <button onclick="document.getElementById('savePresetModal').remove()" style="background:none;border:none;color:var(--text-muted);cursor:pointer;font-size:1.2rem;padding:0.2rem 0.4rem;border-radius:4px">✕</button>
+        </div>
+
+        <div style="margin-bottom:0.85rem">
+          <label style="font-size:0.72rem;color:var(--text-muted);font-weight:600;display:block;margin-bottom:0.3rem">프리셋 이름 <span style="color:#ef4444">*</span></label>
+          <input id="presetNameInput" type="text" placeholder="예: 엄마 기본셋, 트렌디 누나..."
+            style="width:100%;background:var(--bg-secondary);border:1px solid var(--border);color:var(--text-primary);padding:0.55rem 0.75rem;border-radius:7px;font-size:0.82rem;box-sizing:border-box">
+        </div>
+        <div style="margin-bottom:1rem">
+          <label style="font-size:0.72rem;color:var(--text-muted);font-weight:600;display:block;margin-bottom:0.3rem">메모 (선택)</label>
+          <input id="presetDescInput" type="text" placeholder="이 프리셋에 대한 메모..."
+            style="width:100%;background:var(--bg-secondary);border:1px solid var(--border);color:var(--text-primary);padding:0.45rem 0.75rem;border-radius:7px;font-size:0.78rem;box-sizing:border-box">
+        </div>
+
+        <!-- 현재 설정 요약 -->
+        <div style="background:var(--bg-secondary);border:1px solid var(--border);border-radius:8px;padding:0.75rem;margin-bottom:1rem;font-size:0.72rem;color:var(--text-secondary);line-height:1.8">
+          <div style="font-size:0.68rem;color:var(--text-muted);font-weight:600;margin-bottom:0.4rem">📋 저장될 설정</div>
+          <div>🔤 폰트: <strong style="color:var(--text-primary)">${state.subtitleFont || 'NanumSquareRound'}</strong></div>
+          <div>📏 크기/위치: <strong style="color:var(--text-primary)">${state.subtitleFontSize || 36}px · ${state.subtitlePosition || 'bottom'}</strong></div>
+          <div>🎨 글자/배경: <span style="background:${state.subtitleFontColor||'#fff'};color:${state.subtitleFontColor==='#FFFFFF'||state.subtitleFontColor==='#ffffff'?'#333':'#fff'};padding:1px 6px;border-radius:3px;font-size:0.65rem">${state.subtitleFontColor||'#FFFFFF'}</span>
+            · ${state.subtitleBgBar!==false?'배경바 ON':'배경바 OFF'}</div>
+          <div>🎙 성우: <strong style="color:var(--text-primary)">${voiceName || '기본'}</strong></div>
+          <div>😊 감정/속도: <strong style="color:var(--text-primary)">${state.form.tts_emotion || 'smart'} · ${(state.form.tts_speed||1.0).toFixed(2)}×</strong></div>
+        </div>
+
+        <div style="display:flex;align-items:center;gap:0.5rem;margin-bottom:1rem">
+          <input type="checkbox" id="presetIsDefault" style="accent-color:#7c3aed;width:14px;height:14px">
+          <label for="presetIsDefault" style="font-size:0.72rem;color:var(--text-secondary);cursor:pointer">기본 프리셋으로 설정 (앱 시작 시 자동 적용)</label>
+        </div>
+
+        <div style="display:flex;gap:0.5rem">
+          <button onclick="document.getElementById('savePresetModal').remove()"
+            style="flex:1;padding:0.6rem;background:var(--bg-secondary);border:1px solid var(--border);color:var(--text-secondary);border-radius:7px;cursor:pointer;font-size:0.82rem">
+            취소
+          </button>
+          <button onclick="App.saveProductionPreset()"
+            style="flex:2;padding:0.6rem;background:linear-gradient(135deg,#7c3aed,#a855f7);border:none;color:white;border-radius:7px;cursor:pointer;font-size:0.82rem;font-weight:700">
+            <i class="fas fa-save"></i> 저장
+          </button>
+        </div>
+      </div>
+    `
+    document.body.appendChild(modal)
+    setTimeout(() => document.getElementById('presetNameInput')?.focus(), 100)
+  },
+
+  async saveProductionPreset() {
+    const nameEl = document.getElementById('presetNameInput')
+    const descEl = document.getElementById('presetDescInput')
+    const isDefaultEl = document.getElementById('presetIsDefault')
+    const name = nameEl?.value?.trim()
+    if (!name) { nameEl?.focus(); this.showToast('프리셋 이름을 입력해주세요.', 'error'); return }
+
+    const state = this.state
+    const selVoice = this.state.ttsVoices.find(v => v.id === state.form.tts_voice_id)
+
+    try {
+      const res = await axios.post('/api/production-presets', {
+        name,
+        description: descEl?.value?.trim() || '',
+        subtitle_font:        state.subtitleFont || 'NanumSquareRound',
+        subtitle_font_size:   state.subtitleFontSize || 36,
+        subtitle_position:    state.subtitlePosition || 'bottom',
+        subtitle_font_color:  state.subtitleFontColor || '#FFFFFF',
+        subtitle_bg_color:    state.subtitleBgColor || 'rgba(0,0,0,0.65)',
+        subtitle_bg_opacity:  state.subtitleBgOpacity ?? 0.65,
+        subtitle_has_bg_bar:  state.subtitleBgBar !== false ? 1 : 0,
+        subtitle_stroke_color: state.subtitleStrokeColor || '#000000',
+        subtitle_stroke_width: state.subtitleStrokeWidth || 2,
+        tts_voice_id:  selVoice?.voice_id || '',
+        tts_voice_name: selVoice?.name || '',
+        tts_emotion:   state.form.tts_emotion || 'smart',
+        tts_speed:     state.form.tts_speed || 1.0,
+        is_default:    isDefaultEl?.checked ? 1 : 0
+      })
+      if (!res.data.ok) throw new Error(res.data.error)
+
+      // 목록 갱신
+      const listRes = await axios.get('/api/production-presets')
+      this.state.productionPresets = listRes.data.data || []
+      this.state.selectedProductionPresetId = res.data.data.id
+
+      document.getElementById('savePresetModal')?.remove()
+      this.showToast(`✅ "${name}" 프리셋 저장됨!`, 'success')
+      this.rerender()
+    } catch (e) {
+      this.showToast('저장 실패: ' + (e.response?.data?.error || e.message), 'error')
+    }
+  },
+
+  // ── 제작 프리셋 삭제 ──────────────────────────────────────────
+  async deleteProductionPreset(presetId, presetName) {
+    if (!confirm(`"${presetName}" 프리셋을 삭제할까요?`)) return
+    try {
+      await axios.delete(`/api/production-presets/${presetId}`)
+      const listRes = await axios.get('/api/production-presets')
+      this.state.productionPresets = listRes.data.data || []
+      if (this.state.selectedProductionPresetId === presetId) {
+        this.state.selectedProductionPresetId = null
+      }
+      this.showToast('프리셋이 삭제되었습니다.', 'info')
+      this.rerender()
+    } catch (e) {
+      this.showToast('삭제 실패: ' + e.message, 'error')
+    }
   }
 }
 

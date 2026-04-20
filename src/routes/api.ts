@@ -671,6 +671,166 @@ apiRoutes.get('/settings', async (c) => {
 })
 
 // ─────────────────────────────────────────
+// 제작 프리셋 목록 조회
+// ─────────────────────────────────────────
+apiRoutes.get('/production-presets', async (c) => {
+  try {
+    const { results } = await c.env.DB.prepare(
+      'SELECT * FROM production_presets ORDER BY is_default DESC, id ASC'
+    ).all()
+    return c.json({ ok: true, data: results })
+  } catch (e: any) {
+    return c.json({ ok: false, error: e.message }, 500)
+  }
+})
+
+// ─────────────────────────────────────────
+// 제작 프리셋 단건 조회
+// ─────────────────────────────────────────
+apiRoutes.get('/production-presets/:id', async (c) => {
+  try {
+    const id = c.req.param('id')
+    const preset = await c.env.DB.prepare(
+      'SELECT * FROM production_presets WHERE id = ?'
+    ).bind(id).first()
+    if (!preset) return c.json({ ok: false, error: '프리셋을 찾을 수 없습니다.' }, 404)
+    return c.json({ ok: true, data: preset })
+  } catch (e: any) {
+    return c.json({ ok: false, error: e.message }, 500)
+  }
+})
+
+// ─────────────────────────────────────────
+// 제작 프리셋 저장 (신규)
+// ─────────────────────────────────────────
+apiRoutes.post('/production-presets', async (c) => {
+  try {
+    const body = await c.req.json()
+    const {
+      name,
+      description = '',
+      subtitle_font = 'NanumSquareRound',
+      subtitle_font_size = 36,
+      subtitle_position = 'bottom',
+      subtitle_font_color = '#FFFFFF',
+      subtitle_bg_color = 'rgba(0,0,0,0.65)',
+      subtitle_bg_opacity = 0.65,
+      subtitle_has_bg_bar = 1,
+      subtitle_stroke_color = '#000000',
+      subtitle_stroke_width = 2,
+      tts_voice_id = '',
+      tts_voice_name = '',
+      tts_emotion = 'smart',
+      tts_speed = 1.0,
+      is_default = 0
+    } = body
+
+    if (!name || !name.trim()) {
+      return c.json({ ok: false, error: '프리셋 이름을 입력해주세요.' }, 400)
+    }
+
+    // 기본 프리셋으로 설정 시 기존 기본값 해제
+    if (is_default) {
+      await c.env.DB.prepare(
+        'UPDATE production_presets SET is_default = 0'
+      ).run()
+    }
+
+    const result = await c.env.DB.prepare(`
+      INSERT INTO production_presets (
+        name, description,
+        subtitle_font, subtitle_font_size, subtitle_position,
+        subtitle_font_color, subtitle_bg_color, subtitle_bg_opacity,
+        subtitle_has_bg_bar, subtitle_stroke_color, subtitle_stroke_width,
+        tts_voice_id, tts_voice_name, tts_emotion, tts_speed, is_default
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).bind(
+      name.trim(), description,
+      subtitle_font, subtitle_font_size, subtitle_position,
+      subtitle_font_color, subtitle_bg_color, subtitle_bg_opacity,
+      subtitle_has_bg_bar ? 1 : 0, subtitle_stroke_color, subtitle_stroke_width,
+      tts_voice_id, tts_voice_name, tts_emotion, tts_speed, is_default ? 1 : 0
+    ).run()
+
+    const newPreset = await c.env.DB.prepare(
+      'SELECT * FROM production_presets WHERE id = ?'
+    ).bind(result.meta.last_row_id).first()
+
+    return c.json({ ok: true, data: newPreset })
+  } catch (e: any) {
+    return c.json({ ok: false, error: e.message }, 500)
+  }
+})
+
+// ─────────────────────────────────────────
+// 제작 프리셋 수정
+// ─────────────────────────────────────────
+apiRoutes.patch('/production-presets/:id', async (c) => {
+  try {
+    const id = c.req.param('id')
+    const body = await c.req.json()
+
+    const existing = await c.env.DB.prepare(
+      'SELECT * FROM production_presets WHERE id = ?'
+    ).bind(id).first() as any
+    if (!existing) return c.json({ ok: false, error: '프리셋을 찾을 수 없습니다.' }, 404)
+
+    const merged = { ...existing, ...body }
+
+    // 기본 프리셋으로 설정 시 기존 기본값 해제
+    if (merged.is_default) {
+      await c.env.DB.prepare(
+        'UPDATE production_presets SET is_default = 0 WHERE id != ?'
+      ).bind(id).run()
+    }
+
+    await c.env.DB.prepare(`
+      UPDATE production_presets SET
+        name = ?, description = ?,
+        subtitle_font = ?, subtitle_font_size = ?, subtitle_position = ?,
+        subtitle_font_color = ?, subtitle_bg_color = ?, subtitle_bg_opacity = ?,
+        subtitle_has_bg_bar = ?, subtitle_stroke_color = ?, subtitle_stroke_width = ?,
+        tts_voice_id = ?, tts_voice_name = ?, tts_emotion = ?, tts_speed = ?,
+        is_default = ?, updated_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+    `).bind(
+      merged.name, merged.description,
+      merged.subtitle_font, merged.subtitle_font_size, merged.subtitle_position,
+      merged.subtitle_font_color, merged.subtitle_bg_color, merged.subtitle_bg_opacity,
+      merged.subtitle_has_bg_bar ? 1 : 0, merged.subtitle_stroke_color, merged.subtitle_stroke_width,
+      merged.tts_voice_id, merged.tts_voice_name, merged.tts_emotion, merged.tts_speed,
+      merged.is_default ? 1 : 0, id
+    ).run()
+
+    const updated = await c.env.DB.prepare(
+      'SELECT * FROM production_presets WHERE id = ?'
+    ).bind(id).first()
+
+    return c.json({ ok: true, data: updated })
+  } catch (e: any) {
+    return c.json({ ok: false, error: e.message }, 500)
+  }
+})
+
+// ─────────────────────────────────────────
+// 제작 프리셋 삭제
+// ─────────────────────────────────────────
+apiRoutes.delete('/production-presets/:id', async (c) => {
+  try {
+    const id = c.req.param('id')
+    const existing = await c.env.DB.prepare(
+      'SELECT * FROM production_presets WHERE id = ?'
+    ).bind(id).first() as any
+    if (!existing) return c.json({ ok: false, error: '프리셋을 찾을 수 없습니다.' }, 404)
+
+    await c.env.DB.prepare('DELETE FROM production_presets WHERE id = ?').bind(id).run()
+    return c.json({ ok: true, message: '삭제되었습니다.' })
+  } catch (e: any) {
+    return c.json({ ok: false, error: e.message }, 500)
+  }
+})
+
+// ─────────────────────────────────────────
 // 헬퍼: 감정 자동 추론 (대본 분석)
 // ─────────────────────────────────────────
 function inferEmotionFromScript(script: string, personaName?: string): string {

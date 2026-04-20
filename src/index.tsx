@@ -37,6 +37,20 @@ function getMainHTML(): string {
   <title>AI Studio - 페르소나 쇼츠 자동생성</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <link href="https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free@6.4.0/css/all.min.css" rel="stylesheet">
+  <!-- 한국어 폰트: 나눔 손글씨 2종 + 배민체 + G마켓산스 -->
+  <link href="https://fonts.googleapis.com/css2?family=Nanum+Pen+Script&family=Nanum+Brush+Script&display=swap" rel="stylesheet">
+  <style>
+    /* 배민 주아체 */
+    @font-face { font-family:'BMJUA'; src:url('https://fastly.jsdelivr.net/gh/projectnoonnu/noonfonts_one@1.0/BMJUA.woff') format('woff'); font-weight:normal; }
+    /* G마켓산스 Bold */
+    @font-face { font-family:'GmarketSansBold'; src:url('https://fastly.jsdelivr.net/gh/projectnoonnu/noonfonts_2001@1.1/GmarketSansBold.woff') format('woff'); font-weight:700; }
+    /* 나눔스퀘어라운드 */
+    @font-face { font-family:'NanumSquareRound'; src:url('https://fastly.jsdelivr.net/gh/projectnoonnu/noonfonts_two@1.0/NanumSquareRound.woff') format('woff'); font-weight:normal; }
+    @font-face { font-family:'NanumSquareExtraBold'; src:url('https://fastly.jsdelivr.net/gh/projectnoonnu/noonfonts_two@1.0/NanumSquareRoundEB.woff') format('woff'); font-weight:800; }
+    /* 구글 폰트 alias */
+    .font-nanum-pen    { font-family:'Nanum Pen Script',cursive; }
+    .font-nanum-brush  { font-family:'Nanum Brush Script',cursive; }
+  </style>
   <link href="/static/style.css" rel="stylesheet">
   <script src="https://cdn.jsdelivr.net/npm/axios@1.6.0/dist/axios.min.js"></script>
   <!-- FFmpeg.wasm: webm → mp4 변환용 -->
