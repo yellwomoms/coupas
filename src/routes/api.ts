@@ -318,8 +318,10 @@ apiRoutes.post('/tts-preview', async (c) => {
       return c.json({ ok: false, error: 'voice_id가 필요합니다.' }, 400)
     }
 
-    // 샘플 텍스트 (미입력 시 기본값)
-    const text = sample_text || '안녕하세요, 저는 이 목소리로 쇼츠 대본을 읽어드릴 거예요. 잘 부탁드립니다!'
+    // 샘플 텍스트 (미입력 시 기본값) + 첫 글자 클리핑 방지 패딩
+    const rawText = (sample_text || '안녕하세요, 저는 이 목소리로 쇼츠 대본을 읽어드릴 거예요. 잘 부탁드립니다!').trim()
+    // previous_text로 첫 글자 클리핑 방지 처리
+    const text = rawText
 
     const isSmartMode = emotion_type === 'smart' || emotion_type === 'auto'
     const audioTempo  = Math.max(0.5, Math.min(2.0, speed))
@@ -331,7 +333,8 @@ apiRoutes.post('/tts-preview', async (c) => {
       language: 'kor',
       prompt: {
         emotion_type: isSmartMode ? 'smart' : 'preset',
-        ...(!isSmartMode ? { emotion: emotion_type } : {})
+        ...(!isSmartMode ? { emotion: emotion_type } : {}),
+        previous_text: '안녕하세요.'  // 첫 음절 클리핑 방지
       },
       output: {
         volume: 100,
@@ -411,7 +414,21 @@ apiRoutes.post('/jobs/:job_id/generate-tts', async (c) => {
     // voice_id 결정: 요청값 > DB 저장값 > 실제 Typecast 기본 보이스
     // 주의: 'tc_jh001_kor' 같은 프리셋 ID는 실제 Typecast API에서 무효 → 실제 ID 사용
     const DEFAULT_VOICE_ID = 'tc_68f9c6a72f0f04a417bb136f'  // Moonjung (문정)
-    const actualVoiceId = voice_id || ttsVoice?.voice_id || DEFAULT_VOICE_ID
+    // 프런트에서 숫자(DB id)로 넘어오면 해당 보이스의 Typecast ID로 변환
+    let actualVoiceId: string
+    if (voice_id && typeof voice_id === 'number') {
+      // 숫자 id → DB에서 Typecast voice_id 조회
+      const voiceById = await c.env.DB.prepare(
+        'SELECT voice_id FROM tts_voices WHERE id = ?'
+      ).bind(voice_id).first() as any
+      actualVoiceId = voiceById?.voice_id || ttsVoice?.voice_id || DEFAULT_VOICE_ID
+    } else if (voice_id && typeof voice_id === 'string' && voice_id.startsWith('tc_')) {
+      // 이미 Typecast ID 형식
+      actualVoiceId = voice_id
+    } else {
+      // DB에 저장된 보이스 사용
+      actualVoiceId = ttsVoice?.voice_id || DEFAULT_VOICE_ID
+    }
 
     // 페르소나에 맞는 감정 자동 추론
     const inferredEmotion = emotion_type === 'auto' || emotion_type === 'smart'
@@ -426,10 +443,20 @@ apiRoutes.post('/jobs/:job_id/generate-tts', async (c) => {
     // audio_tempo: 0.5~2.0 범위 (Typecast 지원 범위)
     const audioTempo = Math.max(0.5, Math.min(2.0, speed))
 
+    // ── 텍스트 전처리: 첫 글자 클리핑 방지 ────────────────────
+    // Typecast ssfm-v30은 텍스트 맨 앞에서 미세한 묵음이 생길 수 있음
+    // → 앞에 짧은 공백 문장을 덧붙여 실제 대본 첫 글자가 잘리지 않게 처리
+    const rawText = job.script_content.trim()
+    // 앞에 마침표(.)를 붙이면 TTS 엔진이 자연스러운 시작 템포를 잡음
+    // 뒤에도 마침표 추가 → 마지막 음절 끊김 방지
+    // previous_text에 자연스러운 한국어 문장을 설정하여
+    // TTS 엔진이 이미 발화 중인 상태로 인식 → 첫 음절 클리핑 방지
+    const paddedText = rawText
+
     // ── Typecast TTS API 페이로드 ──────────────────────────────
     const ttsPayload: any = {
       voice_id: actualVoiceId,
-      text: job.script_content,
+      text: paddedText,          // ← 패딩된 텍스트 사용
       model: 'ssfm-v30',
       language: 'kor',
       prompt: {
@@ -440,18 +467,21 @@ apiRoutes.post('/jobs/:job_id/generate-tts', async (c) => {
         volume: 100,
         audio_pitch: audio_pitch,
         audio_tempo: audioTempo,
-        audio_format: audio_format  // 'mp3' or 'wav'
+        audio_format: audio_format
       }
     }
 
-    // smart 모드: 전후 문맥 추가 (더 자연스러운 감정 추론)
-    if (isSmartMode && job.script_content.length > 20) {
-      const sentences = job.script_content.split('\n').filter((s: string) => s.trim())
+    // ── previous_text / next_text 설정 ──────────────────────────────
+    // previous_text: 본문과 다른 짧은 자연스러운 문장 → TTS 엔진이
+    //   '이미 발화 중인 상태'로 인식 → 첫 음절 클리핑 방지에 효과적
+    // ※ 본문 내용을 previous_text에 넣으면 TTS가 중복으로 인식해 건너뜀
+    ttsPayload.prompt.previous_text = '안녕하세요.'
+
+    if (rawText.length > 20) {
+      const sentences = rawText.split(/[.!?\n]/).filter((s: string) => s.trim())
       if (sentences.length > 1) {
-        ttsPayload.prompt.previous_text = sentences[0]
-        if (sentences.length > 2) {
-          ttsPayload.prompt.next_text = sentences[sentences.length - 1]
-        }
+        // next_text: 마지막 문장 → 자연스러운 마무리 감정 유지
+        ttsPayload.prompt.next_text = sentences[sentences.length - 1].trim()
       }
     }
 

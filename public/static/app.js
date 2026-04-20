@@ -31,7 +31,7 @@ const App = {
     isGenerating: false,
     isGeneratingTTS: false,
     isRendering: false,           // 영상 렌더링 중
-    activeTab: 'workspace',       // workspace | history | preview
+    activeTab: 'workspace',       // workspace | history | preview | cost
     editingScript: false,
     currentAudio: null,
     playbackSpeed: 1.0,           // 오디오 재생 속도
@@ -432,11 +432,15 @@ const App = {
           <button class="tab-btn ${activeTab === 'preview' ? 'active' : ''}" data-tab="preview">
             <i class="fas fa-film"></i> 자막 미리보기
           </button>
+          <button class="tab-btn ${activeTab === 'cost' ? 'active' : ''}" data-tab="cost">
+            <i class="fas fa-coins"></i> 비용 안내
+          </button>
         </nav>
 
         ${activeTab === 'workspace' ? this.getWorkspaceTabHTML() : ''}
         ${activeTab === 'history' ? this.getHistoryTabHTML() : ''}
         ${activeTab === 'preview' ? this.getPreviewTabHTML() : ''}
+        ${activeTab === 'cost' ? this.getCostTabHTML() : ''}
 
       </main>
     `
@@ -736,13 +740,44 @@ const App = {
               <div style="margin-top:0.6rem;font-size:0.68rem;color:var(--text-muted);text-align:center">브라우저에서 직접 렌더링 중 — 탭을 닫지 마세요</div>
             </div>
           ` : `
-            <div style="text-align:center;padding:1rem">
-              <div style="font-size:0.82rem;color:var(--text-secondary);margin-bottom:0.5rem">
+            <div style="padding:0.5rem 0">
+
+              <!-- ① 원본 영상 업로드 (선택) -->
+              <div style="background:var(--bg-secondary);border:1px solid var(--border);border-radius:10px;padding:0.85rem;margin-bottom:0.85rem">
+                <div style="font-size:0.78rem;font-weight:700;color:var(--text-primary);margin-bottom:0.5rem;display:flex;align-items:center;gap:0.4rem">
+                  <i class="fas fa-video" style="color:#fb923c"></i>
+                  원본 영상 (선택사항)
+                  ${state.bgVideoFile ? `<span style="font-size:0.65rem;color:#10b981;background:rgba(16,185,129,0.1);padding:0.15rem 0.4rem;border-radius:6px;border:1px solid rgba(16,185,129,0.3)">✅ ${state.bgVideoFile.name}</span>` : '<span style="font-size:0.65rem;color:var(--text-muted);background:var(--bg-card);padding:0.15rem 0.4rem;border-radius:6px;border:1px solid var(--border)">미선택시 그라데이션 배경 사용</span>'}
+                </div>
+                <div style="font-size:0.7rem;color:var(--text-muted);margin-bottom:0.6rem;line-height:1.5">
+                  도우인/샤오홍슈에서 다운받은 영상을 업로드하면 해당 영상 위에 자막이 합성됩니다.<br>
+                  <span style="color:#fbbf24">⚠ 9:16 세로 영상 권장</span> — 가로 영상은 크롭됩니다
+                </div>
+                <div style="display:flex;align-items:center;gap:0.5rem;flex-wrap:wrap">
+                  <label for="bgVideoInput" style="display:inline-flex;align-items:center;gap:0.35rem;background:var(--accent);color:white;padding:0.4rem 0.9rem;border-radius:7px;cursor:pointer;font-size:0.78rem;font-weight:600">
+                    <i class="fas fa-upload"></i> ${state.bgVideoFile ? '영상 교체' : '영상 업로드'}
+                  </label>
+                  <input type="file" id="bgVideoInput" accept="video/*" style="display:none"
+                    onchange="App.handleBgVideoUpload(event)">
+                  ${state.bgVideoFile ? `
+                  <button onclick="App.clearBgVideo()" style="display:inline-flex;align-items:center;gap:0.3rem;background:rgba(239,68,68,0.15);color:#ef4444;border:1px solid rgba(239,68,68,0.3);padding:0.4rem 0.7rem;border-radius:7px;cursor:pointer;font-size:0.75rem">
+                    <i class="fas fa-times"></i> 제거
+                  </button>
+                  ` : ''}
+                </div>
+                ${state.bgVideoFile ? `
+                <div style="margin-top:0.5rem;font-size:0.68rem;color:#10b981">
+                  <i class="fas fa-check-circle"></i> ${state.bgVideoFile.name} (${(state.bgVideoFile.size/1024/1024).toFixed(1)}MB) — 이 영상 위에 자막이 합성됩니다
+                </div>` : ''}
+              </div>
+
+              <!-- ② TTS 준비 완료 안내 -->
+              <div style="font-size:0.82rem;color:var(--text-secondary);margin-bottom:0.35rem">
                 <i class="fas fa-check-circle" style="color:#a78bfa;margin-right:6px"></i>
                 TTS 음성 준비 완료 — 자막 합성을 시작할 수 있어요
               </div>
-              <div style="font-size:0.72rem;color:var(--text-muted);margin-bottom:1rem">
-                대본 텍스트 → 자막 오버레이 + TTS 오디오가 합성된 영상이 생성됩니다
+              <div style="font-size:0.72rem;color:var(--text-muted);margin-bottom:0.85rem">
+                ${state.bgVideoFile ? '업로드된 영상 + 자막 + TTS 오디오가 합성됩니다' : '기본 그라데이션 배경 + 자막 + TTS 오디오가 합성됩니다'}
               </div>
 
               <!-- 자막 설정 -->
@@ -1459,6 +1494,31 @@ const App = {
     })
   },
 
+  // ── 원본 영상 업로드 핸들러 ────────────────────────────────────
+  handleBgVideoUpload(event) {
+    const file = event.target.files?.[0]
+    if (!file) return
+    if (!file.type.startsWith('video/')) {
+      this.showToast('영상 파일(mp4, mov 등)만 업로드 가능합니다.', 'error')
+      return
+    }
+    if (file.size > 500 * 1024 * 1024) {
+      this.showToast('파일 크기가 너무 큽니다 (최대 500MB).', 'error')
+      return
+    }
+    this.state.bgVideoFile = file
+    this.showToast(`✅ 영상 업로드됨: ${file.name}`, 'success')
+    this.rerender()
+  },
+
+  clearBgVideo() {
+    this.state.bgVideoFile = null
+    const input = document.getElementById('bgVideoInput')
+    if (input) input.value = ''
+    this.showToast('원본 영상이 제거되었습니다.', 'info')
+    this.rerender()
+  },
+
   // ── 영상 합성 (Canvas + MediaRecorder) ───────────────────────
   async startVideoSynthesis() {
     if (!this.state.currentJob?.tts_audio_url) {
@@ -1504,18 +1564,24 @@ const App = {
 
   // ── 내부: Canvas+MediaRecorder로 자막+TTS 합성 → mp4 출력 ──────
   async _renderSubtitleVideo() {
-    const job     = this.state.currentJob
-    const script  = job.script_content || ''
+    const job      = this.state.currentJob
+    const script   = job.script_content || ''
     const audioSrc = job.tts_audio_url
 
-    // 설정 읽기
-    const fontSize    = parseInt(document.getElementById('subtitleFontSize')?.value || '36')
-    const position    = document.getElementById('subtitlePosition')?.value || 'bottom'
-    const fontColor   = this.state.subtitleColor || '#ffffff'
-    const bgCheck = document.getElementById('subtitleBgBar')
-    const hasBgBar = bgCheck ? bgCheck.checked : true
+    // ── 설정 읽기 (DOM에서 최신 값 우선 읽기) ────────────────────
+    const fontSizeEl = document.getElementById('subtitleFontSize')
+    const positionEl = document.getElementById('subtitlePosition')
+    const bgBarEl    = document.getElementById('subtitleBgBar')
+    const fontSize   = parseInt(fontSizeEl?.value || this.state.subtitleFontSize || '36')
+    const position   = positionEl?.value || this.state.subtitlePosition || 'bottom'
+    const fontColor  = this.state.subtitleColor || '#ffffff'
+    const hasBgBar   = bgBarEl ? bgBarEl.checked : (this.state.subtitleBgBar !== false)
+    // 상태에 저장 (재렌더 시 유지)
+    this.state.subtitleFontSize = fontSize
+    this.state.subtitlePosition = position
+    this.state.subtitleBgBar    = hasBgBar
 
-    // 캔버스 설정 (9:16 세로 비율, 720×1280)
+    // ── 캔버스 9:16 (720×1280) ─────────────────────────────────
     const W = 720, H = 1280
     const canvas = document.getElementById('synthCanvas')
     canvas.width  = W
@@ -1523,217 +1589,345 @@ const App = {
     canvas.style.display = 'none'
     const ctx = canvas.getContext('2d')
 
-    // 오디오 로드
+    // ── 원본 영상 로드 (업로드된 파일 우선, 없으면 그라데이션 배경) ─
+    const bgVideo = this.state.bgVideoFile ? await this._loadBgVideo(this.state.bgVideoFile) : null
+    const hasBgVideo = !!bgVideo
+
+    // ── 오디오 로드 ─────────────────────────────────────────────
     const audio = new Audio(audioSrc)
     audio.crossOrigin = 'anonymous'
     audio.playbackRate = this.state.playbackSpeed || 1.0
     await new Promise((res, rej) => {
-      audio.onloadedmetadata = res
+      audio.onloadedmetadata = () => res(null)
       audio.onerror = rej
       audio.load()
     })
     const duration = audio.duration || 20
 
-    // 대본을 줄 단위로 쪼개고 타이밍 계산
-    const lines = script.split('\n').map(l=>l.trim()).filter(l=>l.length > 0)
-    const timePerLine = duration / Math.max(lines.length, 1)
+    // ── 자막 세그먼트 생성 ────────────────────────────────────────
+    // 대본을 의미 단위로 분리하고 자동 줄바꿈 처리
+    const segments = this._buildSubtitleSegments(script, duration, ctx, fontSize, W)
 
-    // MediaRecorder 설정 (webm으로 녹화 후 ffmpeg으로 mp4 변환)
-    const stream = canvas.captureStream(30)
+    // ── MediaRecorder (webm 녹화) ─────────────────────────────
+    const stream   = canvas.captureStream(30)
     const audioCtx = new (window.AudioContext || window.webkitAudioContext)()
-    const source   = audioCtx.createMediaElementSource(audio)
+    const src      = audioCtx.createMediaElementSource(audio)
     const dest     = audioCtx.createMediaStreamDestination()
-    source.connect(dest)
-    source.connect(audioCtx.destination)
+    src.connect(dest)
+    src.connect(audioCtx.destination)
     stream.addTrack(dest.stream.getAudioTracks()[0])
 
-    // 브라우저 지원 webm mimeType 선택
     const mimeType = MediaRecorder.isTypeSupported('video/webm;codecs=vp9,opus')
       ? 'video/webm;codecs=vp9,opus'
       : MediaRecorder.isTypeSupported('video/webm;codecs=vp8,opus')
         ? 'video/webm;codecs=vp8,opus'
         : 'video/webm'
 
-    const recorder = new MediaRecorder(stream, { mimeType, videoBitsPerSecond: 4000000 })
+    const recorder = new MediaRecorder(stream, { mimeType, videoBitsPerSecond: 5000000 })
     const chunks   = []
-    recorder.ondataavailable = e => { if(e.data.size>0) chunks.push(e.data) }
+    recorder.ondataavailable = e => { if (e.data.size > 0) chunks.push(e.data) }
 
-    // 진행 업데이트 헬퍼
+    // ── 진행 업데이트 헬퍼 ───────────────────────────────────────
     const setProgress = (pct, msg) => {
-      const bar = document.getElementById('renderProgressBar')
+      const bar   = document.getElementById('renderProgressBar')
       const pctEl = document.getElementById('renderPct')
-      const txt = document.getElementById('renderStatusText')
-      if (bar) bar.style.width = pct + '%'
+      const txt   = document.getElementById('renderStatusText')
+      if (bar)   bar.style.width = pct + '%'
       if (pctEl) pctEl.textContent = Math.round(pct) + '%'
-      if (txt) txt.textContent = msg || ''
+      if (txt)   txt.textContent = msg || ''
     }
 
-    // 렌더링 시작
+    // ── 렌더링 시작 ──────────────────────────────────────────────
     recorder.start(100)
     audio.currentTime = 0
     audio.play()
-    setProgress(5, '음성 재생 시작...')
+    setProgress(5, '영상 렌더링 시작...')
 
     let animFrame
     const startTime = performance.now()
 
     const drawFrame = () => {
       const elapsed = (performance.now() - startTime) / 1000
-      const pct = Math.min(elapsed / duration * 100 * 0.6, 60)  // 0~60%는 녹화 단계
-      setProgress(pct, `녹화 중... (${elapsed.toFixed(1)}s / ${duration.toFixed(1)}s)`)
+      const pct     = Math.min(elapsed / duration * 100 * 0.6, 60)
+      setProgress(pct, `렌더링 중... ${elapsed.toFixed(1)}s / ${duration.toFixed(1)}s`)
 
-      // 배경 (그라데이션)
-      const grad = ctx.createLinearGradient(0, 0, 0, H)
-      grad.addColorStop(0, '#0f0a1e')
-      grad.addColorStop(1, '#1a0a2e')
-      ctx.fillStyle = grad
-      ctx.fillRect(0, 0, W, H)
+      // ── 배경 그리기 ────────────────────────────────────────────
+      if (hasBgVideo) {
+        // 원본 영상: Cover 방식으로 9:16 캔버스에 꽉 채움
+        const vw = bgVideo.videoWidth  || W
+        const vh = bgVideo.videoHeight || H
+        const scale = Math.max(W / vw, H / vh)
+        const dw = vw * scale
+        const dh = vh * scale
+        const dx = (W - dw) / 2
+        const dy = (H - dh) / 2
+        ctx.drawImage(bgVideo, dx, dy, dw, dh)
+      } else {
+        // 기본 그라데이션 배경
+        const grad = ctx.createLinearGradient(0, 0, 0, H)
+        grad.addColorStop(0, '#0d0820')
+        grad.addColorStop(0.5, '#160c30')
+        grad.addColorStop(1, '#0d0820')
+        ctx.fillStyle = grad
+        ctx.fillRect(0, 0, W, H)
 
-      // 브랜드 워터마크
-      ctx.font = 'bold 20px sans-serif'
-      ctx.fillStyle = 'rgba(167,139,250,0.3)'
-      ctx.textAlign = 'center'
-      ctx.fillText('AI Studio', W/2, 40)
-
-      // 파형 시각화 (데코레이션)
-      const barCount = 40
-      for (let i = 0; i < barCount; i++) {
-        const x = (W / barCount) * i + W / barCount / 2
-        const h = 20 + Math.sin(elapsed * 3 + i * 0.5) * 15 + Math.random() * 10
-        ctx.fillStyle = `rgba(124,58,237,${0.15 + Math.sin(elapsed + i) * 0.1})`
-        ctx.fillRect(x - 4, H/2 - h/2, 8, h)
-      }
-
-      // 현재 자막 라인 결정
-      const lineIdx = Math.min(Math.floor(elapsed / timePerLine), lines.length - 1)
-      const currentLine = lines[Math.max(0, lineIdx)] || ''
-
-      if (currentLine) {
-        ctx.font = `bold ${fontSize}px 'Apple SD Gothic Neo', 'Noto Sans KR', sans-serif`
-        ctx.textAlign = 'center'
-        const textWidth = ctx.measureText(currentLine).width
-
-        // 자막 Y 위치
-        const yPos = position === 'top' ? 120
-          : position === 'middle' ? H/2
-          : H - 120
-
-        // 배경 바
-        if (hasBgBar) {
-          ctx.fillStyle = 'rgba(0,0,0,0.65)'
-          const pad = 20
-          const barH = fontSize + 28
-          ctx.roundRect
-            ? ctx.roundRect(W/2 - textWidth/2 - pad, yPos - fontSize - 4, textWidth + pad*2, barH, 8)
-            : ctx.fillRect(W/2 - textWidth/2 - pad, yPos - fontSize - 4, textWidth + pad*2, barH)
-          ctx.fill()
+        // 파형 데코레이션
+        for (let i = 0; i < 36; i++) {
+          const x = (W / 36) * i + W / 72
+          const h = 18 + Math.sin(elapsed * 2.5 + i * 0.55) * 14 + Math.random() * 8
+          ctx.fillStyle = `rgba(124,58,237,${0.12 + Math.sin(elapsed + i) * 0.08})`
+          ctx.fillRect(x - 3, H / 2 - h / 2, 6, h)
         }
-
-        // 테두리 (stroke)
-        ctx.strokeStyle = 'rgba(0,0,0,0.9)'
-        ctx.lineWidth = 3
-        ctx.strokeText(currentLine, W/2, yPos)
-
-        // 자막 텍스트
-        ctx.fillStyle = fontColor
-        ctx.fillText(currentLine, W/2, yPos)
       }
 
-      // 타임 표시
-      ctx.font = '18px monospace'
-      ctx.fillStyle = 'rgba(255,255,255,0.3)'
-      ctx.textAlign = 'right'
-      ctx.fillText(`${elapsed.toFixed(1)}s`, W - 20, H - 20)
+      // ── 자막 렌더링 ───────────────────────────────────────────
+      const seg = segments.find(s => elapsed >= s.start && elapsed < s.end)
+      if (seg) {
+        this._drawSubtitle(ctx, seg.lines, W, H, fontSize, fontColor, hasBgBar, position)
+      }
 
-      if (elapsed < duration + 0.3) {
+      if (elapsed < duration + 0.2) {
         animFrame = requestAnimationFrame(drawFrame)
       }
     }
 
     animFrame = requestAnimationFrame(drawFrame)
 
-    // 오디오 끝날 때까지 대기
     await new Promise(res => {
-      audio.onended = res
-      setTimeout(res, (duration + 1) * 1000)
+      audio.onended = () => res(null)
+      setTimeout(() => res(null), (duration + 1) * 1000)
     })
 
     cancelAnimationFrame(animFrame)
-    setProgress(65, 'webm 녹화 완료, mp4 변환 중...')
+    setProgress(62, 'webm 녹화 완료...')
     recorder.stop()
 
-    await new Promise(res => { recorder.onstop = res })
+    await new Promise(res => { recorder.onstop = () => res(null) })
     audio.pause()
-    audioCtx.close()
+    try { audioCtx.close() } catch(e) {}
 
-    // ── webm Blob 생성 ──────────────────────────────────────────
     const webmBlob = new Blob(chunks, { type: mimeType })
 
-    // ── FFmpeg.wasm으로 mp4 변환 ────────────────────────────────
+    // ── FFmpeg.wasm → mp4 변환 ────────────────────────────────
     try {
-      setProgress(70, 'MP4 변환 준비 중...')
-
-      // FFmpeg 로드 확인
+      setProgress(65, 'MP4 변환 준비 중...')
       const { FFmpeg } = window.FFmpegWASM || {}
       const { fetchFile } = window.FFmpegUtil || {}
 
       if (!FFmpeg || !fetchFile) {
-        // FFmpeg 로드 실패 시 webm 그대로 다운로드 (fallback)
-        console.warn('FFmpeg.wasm 로드 실패 → webm fallback')
-        setProgress(100, '완료! (webm 형식)')
+        setProgress(100, '완료! (webm)')
         return URL.createObjectURL(webmBlob)
       }
 
       const ffmpeg = new FFmpeg()
-
-      // 진행 콜백
       ffmpeg.on('progress', ({ progress }) => {
-        const pct = 70 + progress * 28
-        setProgress(pct, `MP4 변환 중... ${Math.round(progress * 100)}%`)
-      })
-      ffmpeg.on('log', ({ message }) => {
-        console.log('[ffmpeg]', message)
+        setProgress(65 + progress * 33, `MP4 변환 중... ${Math.round(progress * 100)}%`)
       })
 
-      // FFmpeg Core wasm 로드 (CDN)
-      setProgress(72, 'FFmpeg 코어 로드 중...')
+      setProgress(68, 'FFmpeg 코어 로드 중...')
       await ffmpeg.load({
         coreURL: 'https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.6/dist/umd/ffmpeg-core.js',
         wasmURL: 'https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.6/dist/umd/ffmpeg-core.wasm',
       })
 
-      setProgress(78, '영상 데이터 전달 중...')
-      // webm 파일을 ffmpeg 가상 파일시스템에 쓰기
-      const webmData = await fetchFile(webmBlob)
-      await ffmpeg.writeFile('input.webm', webmData)
+      setProgress(75, '영상 데이터 전달 중...')
+      await ffmpeg.writeFile('input.webm', await fetchFile(webmBlob))
 
-      setProgress(82, 'MP4 인코딩 중... (잠시 기다려 주세요)')
-      // webm → mp4 변환 (재인코딩 없이 컨테이너 변환 → 빠름)
-      await ffmpeg.exec([
-        '-i', 'input.webm',
-        '-c:v', 'copy',      // 비디오 스트림 복사 (재인코딩 없음 → 빠름)
-        '-c:a', 'aac',       // 오디오 AAC 인코딩 (mp4 호환)
-        '-movflags', '+faststart',  // 웹 스트리밍 최적화
-        'output.mp4'
-      ])
+      setProgress(80, 'MP4 인코딩 중...')
+      await ffmpeg.exec(['-i','input.webm','-c:v','copy','-c:a','aac','-movflags','+faststart','output.mp4'])
 
       setProgress(96, '파일 생성 중...')
       const mp4Data = await ffmpeg.readFile('output.mp4')
       const mp4Blob = new Blob([mp4Data.buffer], { type: 'video/mp4' })
-
-      // 정리
       await ffmpeg.deleteFile('input.webm')
       await ffmpeg.deleteFile('output.mp4')
 
-      setProgress(100, '완료! MP4 다운로드 준비됨')
+      setProgress(100, '✅ MP4 완성!')
       return URL.createObjectURL(mp4Blob)
 
-    } catch (ffmpegErr) {
-      // FFmpeg 변환 실패 시 webm fallback
-      console.error('FFmpeg 변환 실패:', ffmpegErr)
-      setProgress(100, '완료! (webm 형식 — mp4 변환 실패)')
-      this.showToast('MP4 변환 중 오류가 발생해 webm으로 저장합니다.', 'error')
+    } catch (err) {
+      console.error('FFmpeg 변환 실패:', err)
+      setProgress(100, '완료 (webm 형식)')
+      this.showToast('MP4 변환 실패 — webm으로 저장됩니다', 'error')
       return URL.createObjectURL(webmBlob)
+    }
+  },
+
+  // ── 배경 영상 로드 헬퍼 ────────────────────────────────────────
+  _loadBgVideo(file) {
+    return new Promise((resolve, reject) => {
+      const url = URL.createObjectURL(file)
+      const v   = document.createElement('video')
+      v.src     = url
+      v.muted   = true
+      v.loop    = true
+      v.playsInline = true
+      v.onloadeddata = () => { v.play(); resolve(v) }
+      v.onerror  = reject
+      v.load()
+    })
+  },
+
+  // ── 자막 세그먼트 빌더 ────────────────────────────────────────
+  // 대본 → 의미 단위 분리 → 최대 너비 기준 줄바꿈 → 타임코드 할당
+  // 개선: 한 줄당 최대 16자 기준 자동 줄바꿈, 2줄 초과 시 다음 세그먼트로 분리
+  _buildSubtitleSegments(script, duration, ctx, fontSize, canvasW) {
+    // 1) 대본을 의미 단위로 분리
+    const raw = script.trim()
+    let chunks = []
+
+    // 줄바꿈 기준: \n, 마침표·!·?·~ 뒤 공백
+    const rawLines = raw.split('\n').filter(l => l.trim())
+    for (const line of rawLines) {
+      // 문장부호 기준 추가 분리 (단, 분리 후 너무 짧으면 합침)
+      const parts = line.split(/(?<=[.!?~。！？])\s*/)
+      for (const p of parts) {
+        const t = p.trim()
+        if (t.length > 0) chunks.push(t)
+      }
+    }
+    if (chunks.length === 0) chunks = [raw]
+
+    // 2) 캔버스 폰트 설정 (줄바꿈 측정용)
+    const SAFE_W = canvasW - 120   // 양옆 60px 안전 마진 (모바일 크롭 방지)
+    const MAX_LINE_CHARS = 16      // 한 줄 최대 글자 수 (16자 기준)
+    ctx.font = `bold ${fontSize}px 'Apple SD Gothic Neo','Noto Sans KR',sans-serif`
+
+    // 픽셀 너비 기반 줄바꿈 (한국어/영문 혼용 대응)
+    const wrapTextByWidth = (text) => {
+      const lines = []
+      let cur = ''
+      for (const ch of text) {
+        const test = cur + ch
+        if (ctx.measureText(test).width > SAFE_W && cur.length > 0) {
+          lines.push(cur)
+          cur = ch
+        } else {
+          cur = test
+        }
+      }
+      if (cur) lines.push(cur)
+      return lines
+    }
+
+    // 3) 각 청크를 줄 단위로 분해 후 최대 2줄씩 세그먼트로 묶기
+    //    → 화면에 동시에 보이는 자막은 최대 2줄
+    const MAX_LINES_PER_SEG = 2
+    let allLineGroups = []
+    for (const chunk of chunks) {
+      const wrappedLines = wrapTextByWidth(chunk)
+      // 2줄씩 그룹화
+      for (let i = 0; i < wrappedLines.length; i += MAX_LINES_PER_SEG) {
+        allLineGroups.push({
+          lines: wrappedLines.slice(i, i + MAX_LINES_PER_SEG),
+          charCount: wrappedLines.slice(i, i + MAX_LINES_PER_SEG).join('').length
+        })
+      }
+    }
+    if (allLineGroups.length === 0) allLineGroups = [{ lines: [raw], charCount: raw.length }]
+
+    // 4) 타임코드 할당 (글자수 비례 + 최소 노출 시간 0.8초 보장)
+    const totalChars = allLineGroups.reduce((s, g) => s + g.charCount, 0) || 1
+    const MIN_SEG_DUR = 0.8   // 최소 0.8초 노출
+    const segments = []
+    let elapsed = 0
+
+    for (const group of allLineGroups) {
+      const rawDur = (group.charCount / totalChars) * duration
+      const segDur = Math.max(MIN_SEG_DUR, rawDur)
+      segments.push({
+        lines: group.lines,
+        start: elapsed,
+        end:   elapsed + segDur,
+        text:  group.lines.join(' ')
+      })
+      elapsed += segDur
+    }
+
+    // 5) 전체 duration 초과 시 비율 조정
+    if (elapsed > duration) {
+      const scale = duration / elapsed
+      let t = 0
+      for (const seg of segments) {
+        const dur = (seg.end - seg.start) * scale
+        seg.start = t
+        seg.end = t + dur
+        t += dur
+      }
+    }
+
+    return segments
+  },
+
+  // ── 자막 렌더링 ────────────────────────────────────────────────
+  _drawSubtitle(ctx, lines, W, H, fontSize, fontColor, hasBgBar, position) {
+    if (!lines || lines.length === 0) return
+
+    const lineH  = Math.round(fontSize * 1.4)  // 줄 간격 (여유롭게)
+    const padX   = 28                           // 좌우 패딩
+    const padY   = 10                           // 상하 패딩
+    const totalH = lines.length * lineH + padY  // 전체 자막 블록 높이
+
+    // ── 위치 결정 (안전 마진 포함) ──────────────────────────────────
+    // 모바일/쇼츠: 하단 150px은 플랫폼 UI 영역, 상단 120px은 상태바+아이콘
+    const SAFE_BOTTOM = 150
+    const SAFE_TOP    = 120
+    const SAFE_SIDE   = 40   // 양옆 최소 여백 (9:16에서 크롭 방지)
+
+    ctx.font      = `bold ${fontSize}px 'Apple SD Gothic Neo','Noto Sans KR',sans-serif`
+    ctx.textAlign = 'center'
+
+    // 가장 넓은 줄의 픽셀 너비 측정
+    let maxTw = 0
+    for (const line of lines) {
+      const tw = ctx.measureText(line).width
+      if (tw > maxTw) maxTw = tw
+    }
+    // 배경 박스 너비: 텍스트 너비 + 패딩, 캔버스 너비 초과 방지
+    const boxW = Math.min(maxTw + padX * 2, W - SAFE_SIDE * 2)
+
+    // 첫 번째 줄 y 좌표 (텍스트 baseline 기준)
+    let baseY
+    if (position === 'top') {
+      baseY = SAFE_TOP + fontSize
+    } else if (position === 'middle') {
+      baseY = Math.round(H / 2 - totalH / 2 + fontSize)
+    } else {
+      // bottom: 가장 아래 줄이 SAFE_BOTTOM 위에 위치
+      baseY = H - SAFE_BOTTOM - (lines.length - 1) * lineH
+    }
+
+    // ── 배경 박스 (줄 전체를 감싸는 단일 박스) ──────────────────────
+    if (hasBgBar) {
+      const boxH  = totalH
+      const boxX  = W / 2 - boxW / 2
+      const boxY  = baseY - fontSize - padY / 2
+      ctx.fillStyle = 'rgba(0,0,0,0.78)'
+      if (ctx.roundRect) {
+        ctx.beginPath()
+        ctx.roundRect(boxX, boxY, boxW, boxH, 8)
+        ctx.fill()
+      } else {
+        ctx.fillRect(boxX, boxY, boxW, boxH)
+      }
+    }
+
+    // ── 각 줄 텍스트 ────────────────────────────────────────────────
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i]
+      const y    = baseY + i * lineH
+
+      // 외곽선 (배경 바 없을 때 가독성 확보)
+      if (!hasBgBar) {
+        ctx.strokeStyle = 'rgba(0,0,0,0.98)'
+        ctx.lineWidth   = Math.max(4, fontSize * 0.1)
+        ctx.lineJoin    = 'round'
+        ctx.strokeText(line, W / 2, y)
+      }
+
+      // 텍스트
+      ctx.fillStyle = fontColor
+      ctx.fillText(line, W / 2, y)
     }
   },
 
