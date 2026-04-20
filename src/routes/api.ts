@@ -77,8 +77,33 @@ apiRoutes.get('/typecast-voices', async (c) => {
       return c.json({ ok: true, demo: true, data: TYPECAST_PRESET_VOICES })
     }
 
-    const data = await res.json() as any
-    return c.json({ ok: true, data: data.voices || data.result || TYPECAST_PRESET_VOICES })
+    const rawData = await res.json() as any
+    // Typecast v2 API는 배열을 직접 반환
+    const voiceList = Array.isArray(rawData) ? rawData : (rawData.voices || rawData.result || [])
+    
+    // ssfm-v30 지원하는 목소리만 필터링 + UI용 포맷으로 변환
+    const formatted = voiceList
+      .filter((v: any) => {
+        const models = v.models || []
+        return models.some((m: any) => m.version === 'ssfm-v30')
+      })
+      .map((v: any) => {
+        const v30model = (v.models || []).find((m: any) => m.version === 'ssfm-v30')
+        const emotions = v30model?.emotions || ['normal', 'happy', 'sad']
+        return {
+          voice_id: v.voice_id,
+          name: v.voice_name || v.name || v.voice_id,
+          gender: v.gender || 'female',
+          age: v.age || 'young_adult',
+          persona: v.gender === 'male' ? 'dad' : 'mom',
+          description: `${v.gender === 'female' ? '여성' : '남성'} ${v.age === 'middle_age' ? '중년' : '20-30대'}`,
+          emotions,
+          tags: v.use_cases || [],
+          recommended_for: []
+        }
+      })
+    
+    return c.json({ ok: true, data: formatted.length > 0 ? formatted : TYPECAST_PRESET_VOICES })
   } catch (e: any) {
     return c.json({ ok: true, demo: true, data: TYPECAST_PRESET_VOICES })
   }
@@ -279,6 +304,73 @@ apiRoutes.post('/jobs/:job_id/regenerate-script', async (c) => {
 })
 
 // ─────────────────────────────────────────
+// 성우 미리듣기 TTS (짧은 샘플 텍스트)
+// ─────────────────────────────────────────
+apiRoutes.post('/tts-preview', async (c) => {
+  try {
+    const { voice_id, emotion_type = 'smart', speed = 1.0, sample_text } = await c.req.json()
+
+    const apiKey = c.env.TYPECAST_API_KEY
+    if (!apiKey) {
+      return c.json({ ok: false, error: 'Typecast API 키가 없습니다.' }, 400)
+    }
+    if (!voice_id) {
+      return c.json({ ok: false, error: 'voice_id가 필요합니다.' }, 400)
+    }
+
+    // 샘플 텍스트 (미입력 시 기본값)
+    const text = sample_text || '안녕하세요, 저는 이 목소리로 쇼츠 대본을 읽어드릴 거예요. 잘 부탁드립니다!'
+
+    const isSmartMode = emotion_type === 'smart' || emotion_type === 'auto'
+    const audioTempo  = Math.max(0.5, Math.min(2.0, speed))
+
+    const payload: any = {
+      voice_id,
+      text,
+      model: 'ssfm-v30',
+      language: 'kor',
+      prompt: {
+        emotion_type: isSmartMode ? 'smart' : 'preset',
+        ...(!isSmartMode ? { emotion: emotion_type } : {})
+      },
+      output: {
+        volume: 100,
+        audio_pitch: 0,
+        audio_tempo: audioTempo,
+        audio_format: 'mp3'
+      }
+    }
+
+    const res = await fetch('https://api.typecast.ai/v1/text-to-speech', {
+      method: 'POST',
+      headers: { 'X-API-KEY': apiKey, 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    })
+
+    if (!res.ok) {
+      const errText = await res.text()
+      let errMsg = `Typecast 오류 (${res.status})`
+      try { const j = JSON.parse(errText); errMsg = j.message || j.error || errMsg } catch {}
+      return c.json({ ok: false, error: errMsg }, 500)
+    }
+
+    // base64 변환 (청크 분할)
+    const buf  = await res.arrayBuffer()
+    const u8   = new Uint8Array(buf)
+    let binary = ''
+    const CHUNK = 8192
+    for (let i = 0; i < u8.length; i += CHUNK) {
+      binary += String.fromCharCode(...u8.subarray(i, i + CHUNK))
+    }
+    const audioDataUrl = `data:audio/mpeg;base64,${btoa(binary)}`
+
+    return c.json({ ok: true, data: { audio_url: audioDataUrl, voice_id, emotion: emotion_type } })
+  } catch (e: any) {
+    return c.json({ ok: false, error: e.message }, 500)
+  }
+})
+
+// ─────────────────────────────────────────
 // TTS 생성 (Typecast)
 // ─────────────────────────────────────────
 apiRoutes.post('/jobs/:job_id/generate-tts', async (c) => {
@@ -316,25 +408,33 @@ apiRoutes.post('/jobs/:job_id/generate-tts', async (c) => {
       'SELECT * FROM tts_voices WHERE id = ?'
     ).bind(job.tts_voice_id).first() as any
 
-    // voice_id 결정: 요청값 > DB 저장값 > 기본 한국어 보이스
-    const actualVoiceId = voice_id || ttsVoice?.voice_id || 'tc_jh001_kor'
+    // voice_id 결정: 요청값 > DB 저장값 > 실제 Typecast 기본 보이스
+    // 주의: 'tc_jh001_kor' 같은 프리셋 ID는 실제 Typecast API에서 무효 → 실제 ID 사용
+    const DEFAULT_VOICE_ID = 'tc_68f9c6a72f0f04a417bb136f'  // Moonjung (문정)
+    const actualVoiceId = voice_id || ttsVoice?.voice_id || DEFAULT_VOICE_ID
 
     // 페르소나에 맞는 감정 자동 추론
-    const resolvedEmotion = emotion_type === 'auto'
+    const inferredEmotion = emotion_type === 'auto' || emotion_type === 'smart'
       ? inferEmotionFromScript(job.script_content, ttsVoice?.persona_name)
-      : emotion_type
+      : emotion_type   // 'normal' | 'happy' | 'sad' | 'angry' | 'whisper' | 'toneup' | 'tonedown'
 
-    // audio_tempo: 0.9~1.1 범위로 제한 (쇼츠 싱크)
-    const audioTempo = Math.max(0.9, Math.min(1.1, speed))
+    // Typecast prompt.emotion_type: 'preset' (특정감정) | 'smart' (자동) | 'embedding'
+    // 감정 preset 지정 시: emotion_type='preset', emotion=실제감정값
+    const isSmartMode = emotion_type === 'smart' || emotion_type === 'auto'
+    const promptEmotionType = isSmartMode ? 'smart' : 'preset'
 
-    // ── Typecast TTS API 호출 ──────────────────────────────────
+    // audio_tempo: 0.5~2.0 범위 (Typecast 지원 범위)
+    const audioTempo = Math.max(0.5, Math.min(2.0, speed))
+
+    // ── Typecast TTS API 페이로드 ──────────────────────────────
     const ttsPayload: any = {
       voice_id: actualVoiceId,
       text: job.script_content,
-      model: 'ssfm-v30',  // 최신 모델 (37개 언어, 7감정)
-      language: 'kor',     // 한국어
+      model: 'ssfm-v30',
+      language: 'kor',
       prompt: {
-        emotion_type: resolvedEmotion
+        emotion_type: promptEmotionType,
+        ...(promptEmotionType === 'preset' ? { emotion: inferredEmotion } : {})
       },
       output: {
         volume: 100,
@@ -344,8 +444,8 @@ apiRoutes.post('/jobs/:job_id/generate-tts', async (c) => {
       }
     }
 
-    // smart 감정일 때 전후 맥락 추가 (더 자연스러운 감정 추론)
-    if (resolvedEmotion === 'smart' && job.script_content.length > 20) {
+    // smart 모드: 전후 문맥 추가 (더 자연스러운 감정 추론)
+    if (isSmartMode && job.script_content.length > 20) {
       const sentences = job.script_content.split('\n').filter((s: string) => s.trim())
       if (sentences.length > 1) {
         ttsPayload.prompt.previous_text = sentences[0]
@@ -377,11 +477,15 @@ apiRoutes.post('/jobs/:job_id/generate-tts', async (c) => {
       return c.json({ ok: false, error: errMsg, detail: errText }, 500)
     }
 
-    // Typecast는 audio/wav 또는 audio/mpeg 바이너리 반환
+    // ── base64 변환 (스택 오버플로우 방지 — 청크 분할 방식) ──
     const audioBuffer = await ttsResponse.arrayBuffer()
-    const base64Audio = btoa(
-      String.fromCharCode(...new Uint8Array(audioBuffer))
-    )
+    const uint8 = new Uint8Array(audioBuffer)
+    let binary = ''
+    const CHUNK = 8192
+    for (let i = 0; i < uint8.length; i += CHUNK) {
+      binary += String.fromCharCode(...uint8.subarray(i, i + CHUNK))
+    }
+    const base64Audio = btoa(binary)
     const mimeType = audio_format === 'wav' ? 'audio/wav' : 'audio/mpeg'
     const audioDataUrl = `data:${mimeType};base64,${base64Audio}`
 
@@ -396,7 +500,7 @@ apiRoutes.post('/jobs/:job_id/generate-tts', async (c) => {
         audio_url: audioDataUrl,
         job_id,
         voice_id: actualVoiceId,
-        emotion: resolvedEmotion,
+        emotion: inferredEmotion,
         tempo: audioTempo,
         format: audio_format,
         provider: 'typecast'
@@ -567,8 +671,8 @@ function inferEmotionFromScript(script: string, personaName?: string): string {
 // ─────────────────────────────────────────
 const TYPECAST_PRESET_VOICES = [
   {
-    voice_id: 'tc_jh001_kor',
-    name: '지현',
+    voice_id: 'tc_68f9c6a72f0f04a417bb136f',  // Moonjung - 실제 Typecast ID
+    name: '문정 (Moonjung)',
     gender: 'female',
     age: '30s',
     persona: 'mom',
@@ -578,45 +682,45 @@ const TYPECAST_PRESET_VOICES = [
     recommended_for: ['엄마 페르소나', '공감형 CTA', '육아 콘텐츠']
   },
   {
-    voice_id: 'tc_ys002_kor',
-    name: '유선',
+    voice_id: 'tc_662a15c1e31aab9a774b3b31',  // Kristen - 실제 Typecast ID
+    name: '크리스틴 (Kristen)',
     gender: 'female',
     age: '20s',
     persona: 'sister',
-    description: '트렌디하고 생동감 넘치는 20대 여성',
+    description: '밝고 친근한 20대 여성',
     emotions: ['normal', 'happy', 'sad', 'angry', 'whisper', 'toneup', 'tonedown'],
     tags: ['누나', '트렌디', '자기관리'],
     recommended_for: ['누나/언니 페르소나', '뷰티/패션', '자기계발']
   },
   {
-    voice_id: 'tc_ms003_kor',
-    name: '민수',
-    gender: 'male',
+    voice_id: 'tc_68537c9420b646f2176890ba',  // Seojin - 실제 Typecast ID
+    name: '서진 (Seojin)',
+    gender: 'female',
     age: '20s',
     persona: 'solo',
-    description: '자연스럽고 친근한 20대 남성',
+    description: '세련되고 트렌디한 20대 여성',
     emotions: ['normal', 'happy', 'sad', 'angry', 'whisper', 'toneup', 'tonedown'],
     tags: ['자취생', '실용', '가성비'],
     recommended_for: ['자취생 페르소나', '가전/생활용품', '가성비 콘텐츠']
   },
   {
-    voice_id: 'tc_jw004_kor',
-    name: '준원',
-    gender: 'male',
-    age: '40s',
+    voice_id: 'tc_68785db8ba9cd7503f27d921',  // Gowoon - 실제 Typecast ID
+    name: '고운 (Gowoon)',
+    gender: 'female',
+    age: '20s',
     persona: 'expert',
-    description: '신뢰감 있고 전문적인 40대 남성',
+    description: '차분하고 전문적인 20대 여성',
     emotions: ['normal', 'happy', 'sad', 'angry', 'whisper', 'toneup', 'tonedown'],
     tags: ['전문가', '신뢰', '정보'],
     recommended_for: ['전문가 페르소나', '건강/의료', '기술 제품']
   },
   {
-    voice_id: 'tc_sh005_kor',
-    name: '성호',
+    voice_id: 'tc_68d4b115f0486108a7eefb37',  // Kangil - 실제 Typecast ID
+    name: '강일 (Kangil)',
     gender: 'male',
-    age: '30s',
+    age: '20s',
     persona: 'dad',
-    description: '유쾌하고 솔직한 30대 아빠',
+    description: '신뢰감 있는 20대 남성',
     emotions: ['normal', 'happy', 'sad', 'angry', 'whisper', 'toneup', 'tonedown'],
     tags: ['육아대디', '유쾌', '솔직'],
     recommended_for: ['육아 페르소나', '패밀리 제품', '놀이/교육']

@@ -299,7 +299,7 @@ const App = {
           </div>
         </section>
 
-        <!-- STEP 5: TTS 성우 + 감정 선택 -->
+        <!-- STEP 5: TTS 성우 + 감정 선택 + 미리듣기 -->
         <section class="section">
           <div class="section-title">
             <span class="step-badge">5</span>
@@ -307,8 +307,11 @@ const App = {
             <span style="font-size:0.62rem;color:#a855f7;background:rgba(168,85,247,0.1);padding:0.15rem 0.4rem;border-radius:4px;margin-left:6px">TYPECAST</span>
           </div>
 
-          <!-- 성우 목록 -->
-          <div style="font-size:0.72rem;color:var(--text-muted);margin-bottom:0.5rem">성우 선택</div>
+          <!-- 성우 목록 (미리듣기 버튼 포함) -->
+          <div style="font-size:0.72rem;color:var(--text-muted);margin-bottom:0.5rem">
+            성우 선택
+            <span style="font-size:0.65rem;color:#a78bfa;margin-left:6px">▶ 버튼으로 미리듣기 가능</span>
+          </div>
           <div class="voice-grid" id="voiceList">
             ${ttsVoices.map(v => {
               const genderIcon = v.gender === 'male' ? '👨' : '👩'
@@ -316,22 +319,42 @@ const App = {
                 'warm': '#f59e0b', 'trendy': '#a855f7',
                 'casual': '#10b981', 'professional': '#3b82f6', 'cheerful': '#f97316'
               }[v.style] || '#6b7280'
+              const isSelected = form.tts_voice_id === v.id
               return `
-                <div class="voice-item ${form.tts_voice_id === v.id ? 'selected' : ''}"
-                  data-voice-id="${v.id}">
+                <div class="voice-item ${isSelected ? 'selected' : ''}" data-voice-id="${v.id}"
+                  style="position:relative">
                   <div class="voice-avatar" style="background:${styleColor}22;border:1px solid ${styleColor}44">
                     ${genderIcon}
                   </div>
-                  <div class="voice-info">
+                  <div class="voice-info" style="flex:1;min-width:0">
                     <div class="voice-name">${v.name}</div>
-                    <div class="voice-desc">${v.description || ''}</div>
+                    <div class="voice-desc" style="font-size:0.62rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${v.description || ''}</div>
                   </div>
-                  ${form.tts_voice_id === v.id
-                    ? `<i class="fas fa-check-circle" style="color:var(--accent-light);font-size:0.85rem"></i>`
-                    : ''}
+                  <div style="display:flex;flex-direction:column;align-items:center;gap:0.3rem;flex-shrink:0">
+                    <button
+                      onclick="event.stopPropagation();App.previewVoice(${v.id},'${this.escHtml(v.voice_id)}','${this.escHtml(v.name)}')"
+                      id="previewBtn_${v.id}"
+                      title="미리듣기"
+                      style="width:28px;height:28px;border-radius:50%;background:${styleColor}22;border:1px solid ${styleColor}66;color:${styleColor};cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:0.75rem;transition:all 0.2s;flex-shrink:0">
+                      <i class="fas fa-play" id="previewIcon_${v.id}"></i>
+                    </button>
+                    ${isSelected ? `<i class="fas fa-check-circle" style="color:var(--accent-light);font-size:0.8rem"></i>` : ''}
+                  </div>
                 </div>
               `
             }).join('')}
+          </div>
+
+          <!-- 미리듣기 상태 바 -->
+          <div id="voicePreviewBar" style="display:none;margin-top:0.6rem;background:rgba(124,58,237,0.08);border:1px solid rgba(124,58,237,0.2);border-radius:8px;padding:0.55rem 0.75rem">
+            <div style="display:flex;align-items:center;gap:0.6rem">
+              <span class="spinner" style="width:14px;height:14px;border-width:2px;border-color:rgba(124,58,237,0.2);border-top-color:#a855f7" id="previewSpinner"></span>
+              <span style="font-size:0.75rem;color:#a78bfa" id="previewStatusText">미리듣기 생성 중...</span>
+              <button onclick="App.stopPreview()" style="margin-left:auto;background:none;border:none;color:var(--text-muted);cursor:pointer;font-size:0.75rem;padding:0.1rem 0.3rem">
+                <i class="fas fa-stop"></i> 중지
+              </button>
+            </div>
+            <audio id="previewAudio" style="display:none" onended="App.onPreviewEnded()"></audio>
           </div>
 
           <!-- 감정 선택 (Typecast 7감정 + 스마트 자동) -->
@@ -354,18 +377,20 @@ const App = {
           <!-- TTS 속도 슬라이더 -->
           <div style="margin-top:0.85rem">
             <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:0.35rem">
-              <span style="font-size:0.72rem;color:var(--text-muted)">TTS 속도 (싱크 조절)</span>
-              <span id="speedLabel" style="font-size:0.75rem;font-weight:700;color:var(--accent-light)">${form.tts_speed.toFixed(1)}×</span>
+              <span style="font-size:0.72rem;color:var(--text-muted)">TTS 생성 속도</span>
+              <span id="speedLabel" style="font-size:0.75rem;font-weight:700;color:var(--accent-light)">${form.tts_speed.toFixed(2)}×</span>
             </div>
             <div style="display:flex;align-items:center;gap:0.5rem">
-              <span style="font-size:0.65rem;color:var(--text-muted)">0.9×</span>
+              <span style="font-size:0.65rem;color:var(--text-muted)">0.5×</span>
               <input type="range" id="ttsSpeedSlider"
-                min="0.9" max="1.1" step="0.05" value="${form.tts_speed}"
+                min="0.5" max="2.0" step="0.05" value="${form.tts_speed}"
                 style="flex:1;accent-color:#7c3aed;height:4px">
-              <span style="font-size:0.65rem;color:var(--text-muted)">1.1×</span>
+              <span style="font-size:0.65rem;color:var(--text-muted)">2.0×</span>
             </div>
-            <div style="font-size:0.65rem;color:var(--text-muted);margin-top:0.3rem;text-align:center">
-              15초 → ${Math.round(15 / form.tts_speed)}초 영상 기준
+            <div style="display:flex;justify-content:space-between;font-size:0.63rem;color:var(--text-muted);margin-top:0.25rem">
+              <span>느리게 (명확)</span>
+              <span style="color:var(--accent-light)">${form.tts_speed.toFixed(2)}×</span>
+              <span>빠르게 (짧게)</span>
             </div>
           </div>
         </section>
@@ -557,6 +582,49 @@ const App = {
               </button>
             </div>
           </div>
+        ` : ''}
+
+        ${hasScript && !hasTTS && !state.isGeneratingTTS ? `
+          <!-- ── 선택된 성우 정보 + 미리듣기 ── -->
+          ${(() => {
+            const selVoice = this.state.ttsVoices.find(v => v.id === this.state.form.tts_voice_id)
+            if (!selVoice) return ''
+            const emotionLabel = this.emotionOptions.find(e => e.value === this.state.form.tts_emotion)?.label?.split(' ')[0] || '🧠 스마트'
+            const speed = (this.state.form.tts_speed || 1.0).toFixed(2)
+            const genderIcon = selVoice.gender === 'male' ? '🧔' : '👩'
+            return `
+              <div style="background:var(--bg-secondary);border:1px solid var(--border);border-radius:10px;padding:0.85rem;margin-bottom:0.75rem">
+                <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:0.55rem">
+                  <div style="font-size:0.72rem;color:var(--text-muted);font-weight:600">
+                    <i class="fas fa-user-circle" style="margin-right:4px;color:#a78bfa"></i>선택된 성우
+                  </div>
+                  <button onclick="App.workspacePreview(${selVoice.id},'${selVoice.voice_id}','${selVoice.name}')"
+                    style="display:inline-flex;align-items:center;gap:0.35rem;background:rgba(124,58,237,0.15);border:1px solid #7c3aed;color:#a78bfa;padding:0.3rem 0.7rem;border-radius:6px;cursor:pointer;font-size:0.72rem;font-weight:600"
+                    id="workspacePreviewBtn">
+                    <i class="fas fa-play" id="workspacePreviewIcon"></i>
+                    목소리 미리듣기
+                  </button>
+                </div>
+                <div style="display:flex;align-items:center;gap:0.75rem">
+                  <div style="font-size:1.5rem;line-height:1">${genderIcon}</div>
+                  <div>
+                    <div style="font-size:0.85rem;font-weight:700;color:var(--text-primary)">${selVoice.name}</div>
+                    <div style="font-size:0.68rem;color:var(--text-muted);margin-top:0.15rem">${selVoice.description || ''}</div>
+                  </div>
+                  <div style="margin-left:auto;text-align:right">
+                    <div style="font-size:0.65rem;color:#a78bfa;background:rgba(124,58,237,0.1);padding:0.15rem 0.4rem;border-radius:4px;margin-bottom:0.25rem">${emotionLabel}</div>
+                    <div style="font-size:0.65rem;color:#34d399;background:rgba(16,185,129,0.1);padding:0.15rem 0.4rem;border-radius:4px">${speed}× 속도</div>
+                  </div>
+                </div>
+                <!-- 미리듣기 상태 표시줄 -->
+                <div id="workspacePreviewBar" style="display:none;margin-top:0.55rem;background:rgba(124,58,237,0.08);border:1px solid rgba(124,58,237,0.2);border-radius:6px;padding:0.4rem 0.6rem;display:none;align-items:center;gap:0.5rem">
+                  <span class="spinner" style="width:12px;height:12px;border-width:2px;border-color:rgba(124,58,237,0.2);border-top-color:#a855f7" id="workspacePreviewSpinner"></span>
+                  <span style="font-size:0.72rem;color:#a78bfa" id="workspacePreviewStatus">미리듣기 생성 중...</span>
+                  <audio id="workspacePreviewAudio" style="display:none" onended="App.onWorkspacePreviewEnded()"></audio>
+                </div>
+              </div>
+            `
+          })()}
         ` : ''}
 
         ${hasTTS ? `
@@ -1199,6 +1267,169 @@ const App = {
     } finally {
       this.state.isGeneratingTTS = false
       this.rerender()
+    }
+  },
+
+  // ── 성우 미리듣기 ─────────────────────────────────────────────
+  async previewVoice(voiceId, voiceApiId, voiceName) {
+    // 이미 재생 중이면 중지
+    this.stopPreview()
+
+    const bar       = document.getElementById('voicePreviewBar')
+    const spinner   = document.getElementById('previewSpinner')
+    const statusTxt = document.getElementById('previewStatusText')
+    const icon      = document.getElementById(`previewIcon_${voiceId}`)
+
+    if (bar) bar.style.display = 'block'
+    if (statusTxt) statusTxt.textContent = `${voiceName} 목소리 생성 중...`
+    if (icon) icon.className = 'fas fa-spinner fa-spin'
+
+    this.state._previewVoiceId = voiceId
+
+    // 샘플 텍스트: 현재 대본 앞 30자 or 기본 문구
+    const sampleText = this.state.currentJob?.script_content
+      ? this.state.currentJob.script_content.substring(0, 50).trim()
+      : '안녕하세요! 저는 이 목소리로 쇼츠 대본을 읽어드릴 거예요. 잘 부탁드립니다!'
+
+    try {
+      const res = await axios.post('/api/tts-preview', {
+        voice_id: voiceApiId,
+        emotion_type: this.state.form.tts_emotion || 'smart',
+        speed: this.state.form.tts_speed || 1.0,
+        sample_text: sampleText
+      })
+
+      if (!res.data.ok) {
+        throw new Error(res.data.error || '미리듣기 실패')
+      }
+
+      const audio = document.getElementById('previewAudio')
+      if (!audio) return
+
+      audio.src = res.data.data.audio_url
+      audio.playbackRate = this.state.playbackSpeed || 1.0
+      audio.load()
+
+      if (spinner) spinner.style.display = 'none'
+      if (statusTxt) {
+        statusTxt.innerHTML = `
+          <i class="fas fa-music" style="margin-right:4px;color:#a855f7"></i>
+          <strong>${voiceName}</strong> 재생 중
+          <span style="font-size:0.65rem;color:var(--text-muted);margin-left:6px">
+            감정: ${this.emotionOptions.find(e => e.value === this.state.form.tts_emotion)?.label?.split(' ')[0] || '🧠'} · 속도: ${this.state.form.tts_speed.toFixed(2)}×
+          </span>
+        `
+      }
+      if (icon) icon.className = 'fas fa-stop'
+
+      await audio.play()
+
+    } catch (e) {
+      if (bar) bar.style.display = 'none'
+      if (icon) icon.className = 'fas fa-play'
+      this.showToast('미리듣기 오류: ' + (e.response?.data?.error || e.message), 'error')
+    }
+  },
+
+  stopPreview() {
+    // 패널(Step5) 미리듣기 정리
+    const audio = document.getElementById('previewAudio')
+    if (audio && !audio.paused) { audio.pause(); audio.src = '' }
+    const bar = document.getElementById('voicePreviewBar')
+    if (bar) bar.style.display = 'none'
+    if (this.state._previewVoiceId) {
+      const icon = document.getElementById(`previewIcon_${this.state._previewVoiceId}`)
+      if (icon) icon.className = 'fas fa-play'
+      this.state._previewVoiceId = null
+    }
+    const spinner = document.getElementById('previewSpinner')
+    if (spinner) spinner.style.display = 'inline-block'
+
+    // 워크스페이스 미리듣기 정리
+    const wAudio = document.getElementById('workspacePreviewAudio')
+    if (wAudio && !wAudio.paused) { wAudio.pause(); wAudio.src = '' }
+    const wBar = document.getElementById('workspacePreviewBar')
+    if (wBar) wBar.style.display = 'none'
+    const wIcon = document.getElementById('workspacePreviewIcon')
+    if (wIcon) wIcon.className = 'fas fa-play'
+    this.state._workspacePreviewPlaying = false
+  },
+
+  onPreviewEnded() {
+    const bar = document.getElementById('voicePreviewBar')
+    const statusTxt = document.getElementById('previewStatusText')
+    if (bar) bar.style.display = 'none'
+    if (this.state._previewVoiceId) {
+      const icon = document.getElementById(`previewIcon_${this.state._previewVoiceId}`)
+      if (icon) icon.className = 'fas fa-play'
+      this.state._previewVoiceId = null
+    }
+  },
+
+  // 워크스페이스 미리듣기 종료 콜백
+  onWorkspacePreviewEnded() {
+    const bar = document.getElementById('workspacePreviewBar')
+    if (bar) bar.style.display = 'none'
+    const icon = document.getElementById('workspacePreviewIcon')
+    if (icon) icon.className = 'fas fa-play'
+    this.state._workspacePreviewPlaying = false
+  },
+
+  // 워크스페이스 전용 미리듣기 (TTS 생성 전 선택된 성우 확인용)
+  async workspacePreview(voiceId, voiceApiId, voiceName) {
+    // 이미 재생 중이면 중지
+    const wAudio = document.getElementById('workspacePreviewAudio')
+    if (this.state._workspacePreviewPlaying && wAudio) {
+      wAudio.pause(); wAudio.src = ''
+      this.state._workspacePreviewPlaying = false
+      const icon = document.getElementById('workspacePreviewIcon')
+      if (icon) icon.className = 'fas fa-play'
+      const bar = document.getElementById('workspacePreviewBar')
+      if (bar) bar.style.display = 'none'
+      return
+    }
+
+    const bar    = document.getElementById('workspacePreviewBar')
+    const status = document.getElementById('workspacePreviewStatus')
+    const icon   = document.getElementById('workspacePreviewIcon')
+    const btn    = document.getElementById('workspacePreviewBtn')
+
+    if (bar)    { bar.style.display = 'flex' }
+    if (status) status.textContent = `${voiceName} 목소리 생성 중...`
+    if (icon)   icon.className = 'fas fa-spinner fa-spin'
+    if (btn)    btn.disabled = true
+
+    const sampleText = this.state.currentJob?.script_content
+      ? this.state.currentJob.script_content.substring(0, 60).trim()
+      : '안녕하세요! 저는 이 목소리로 쇼츠 대본을 읽어드릴 거예요. 잘 부탁드립니다!'
+
+    try {
+      const res = await axios.post('/api/tts-preview', {
+        voice_id: voiceApiId,
+        emotion_type: this.state.form.tts_emotion || 'smart',
+        speed: this.state.form.tts_speed || 1.0,
+        sample_text: sampleText
+      })
+      if (!res.data.ok) throw new Error(res.data.error || '미리듣기 실패')
+
+      const audio = document.getElementById('workspacePreviewAudio')
+      if (!audio) return
+      audio.src = res.data.data.audio_url
+      audio.playbackRate = this.state.playbackSpeed || 1.0
+      audio.load()
+
+      if (icon)   icon.className = 'fas fa-stop'
+      if (status) status.innerHTML = `<i class="fas fa-music" style="margin-right:4px;color:#a855f7"></i><strong>${voiceName}</strong> 재생 중`
+      if (btn)    btn.disabled = false
+      this.state._workspacePreviewPlaying = true
+
+      await audio.play()
+    } catch (e) {
+      if (bar)  bar.style.display = 'none'
+      if (icon) icon.className = 'fas fa-play'
+      if (btn)  btn.disabled = false
+      this.state._workspacePreviewPlaying = false
+      this.showToast('미리듣기 오류: ' + (e.response?.data?.error || e.message), 'error')
     }
   },
 
