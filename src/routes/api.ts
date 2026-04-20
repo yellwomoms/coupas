@@ -1266,7 +1266,7 @@ ${regenerateNote}
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 📏 출력 형식
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-- 총 길이: 200~280자 (TTS 45~60초 분량)
+- 총 길이: 70~130자 (TTS 15~30초 분량)
 - 구조: [오프닝 훅 0~3초] → [상품 3단계 전개] → [중간 훅] → [CTA]
 - 줄바꿈: 호흡마다 (TTS 포즈)
 - 이모지: CTA 마지막 줄에만 최대 1~2개
@@ -1282,7 +1282,7 @@ ${regenerateNote}
 - 의성어 1개 이상 포함
 - 접속사 사용 금지
 - CTA 규칙 적용
-- 45~60초 분량 (TTS 기준)`
+- 15~30초 분량 (TTS 기준)`
 
   const response = await fetch('https://api.openai.com/v1/chat/completions', {
     method: 'POST',
@@ -1296,7 +1296,7 @@ ${regenerateNote}
         { role: 'system', content: systemPrompt },
         { role: 'user', content: userPrompt }
       ],
-      max_tokens: 900,
+      max_tokens: 700,
       temperature: isRegenerate ? 0.95 : 0.85
     })
   })
