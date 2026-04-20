@@ -148,27 +148,10 @@ function getMainHTML(initData: any): string {
   ${inlineScript}
   <link href="/static/style.css" rel="stylesheet">
 
-  <!-- ⑥ FFmpeg: 영상 합성 버튼 클릭 시에만 동적 로드 (초기 로드 전혀 없음) -->
-  <script>
-  window._ffmpegLoaded = false
-  window.loadFFmpeg = function() {
-    if (window._ffmpegLoaded) return Promise.resolve()
-    window._ffmpegLoaded = true
-    return new Promise((resolve, reject) => {
-      const s1 = document.createElement('script')
-      s1.src = 'https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@0.12.10/dist/umd/ffmpeg.js'
-      s1.onload = () => {
-        const s2 = document.createElement('script')
-        s2.src = 'https://cdn.jsdelivr.net/npm/@ffmpeg/util@0.12.1/dist/umd/index.js'
-        s2.onload = resolve
-        s2.onerror = reject
-        document.head.appendChild(s2)
-      }
-      s1.onerror = reject
-      document.head.appendChild(s1)
-    })
-  }
-  </script>
+  <!-- ⑥ mp4-muxer: 영상 합성 시 동적 로드 (74KB, FFmpeg 32MB 대비 초경량) -->
+  <!-- WebCodecs API (Chrome 94+, Safari 16.4+, Android Chrome) + mp4-muxer 조합 -->
+  <!-- 미지원 브라우저는 자동으로 MediaRecorder WebM 폴백 사용 -->
+  <link rel="preconnect" href="https://unpkg.com" crossorigin>
 </head>
 <body style="background:#030712;color:#fff;min-height:100vh;">
   <!-- 인라인 초기 로딩 화면: JS 파싱 전에도 즉시 표시 -->

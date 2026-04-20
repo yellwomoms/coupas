@@ -2171,13 +2171,13 @@ const App = {
     }
   },
 
-  // ── 내부: Canvas+MediaRecorder로 자막+TTS 합성 → mp4 출력 ──────
+  // ── 내부: Canvas → WebCodecs H.264 MP4 + mp4-muxer 합성 ─────────
   async _renderSubtitleVideo() {
     const job      = this.state.currentJob
     const script   = job.script_content || ''
     const audioSrc = job.tts_audio_url
 
-    // ── 설정 읽기 (DOM에서 최신 값 우선 읽기) ────────────────────
+    // ── 설정 읽기 ────────────────────────────────────────────────
     const fontSizeEl = document.getElementById('subtitleFontSize')
     const positionEl = document.getElementById('subtitlePosition')
     const bgBarEl    = document.getElementById('subtitleBgBar')
@@ -2187,7 +2187,6 @@ const App = {
     const hasBgBar   = bgBarEl ? bgBarEl.checked : (this.state.subtitleBgBar !== false)
     const fontFamily = this.state.subtitleFont || 'NanumSquareRound'
     const bgColor    = hasBgBar ? (this.state.subtitleBgColor || 'rgba(0,0,0,0.65)') : 'transparent'
-    // 상태에 저장 (재렌더 시 유지)
     this.state.subtitleFontSize = fontSize
     this.state.subtitlePosition = position
     this.state.subtitleBgBar    = hasBgBar
@@ -2200,27 +2199,203 @@ const App = {
     canvas.style.display = 'none'
     const ctx = canvas.getContext('2d')
 
-    // ── 원본 영상 로드 (업로드된 파일 우선, 없으면 그라데이션 배경) ─
-    const bgVideo = this.state.bgVideoFile ? await this._loadBgVideo(this.state.bgVideoFile) : null
+    // ── 배경 영상 로드 ────────────────────────────────────────────
+    const bgVideo   = this.state.bgVideoFile ? await this._loadBgVideo(this.state.bgVideoFile) : null
     const hasBgVideo = !!bgVideo
 
-    // ── 오디오 로드 ─────────────────────────────────────────────
-    const audio = new Audio(audioSrc)
-    audio.crossOrigin = 'anonymous'
-    audio.playbackRate = this.state.playbackSpeed || 1.0
-    await new Promise((res, rej) => {
-      audio.onloadedmetadata = () => res(null)
-      audio.onerror = rej
-      audio.load()
-    })
-    const duration = audio.duration || 20
+    // ── 오디오 디코딩 (AudioBuffer) ──────────────────────────────
+    const setProgress = (pct, msg) => {
+      const bar   = document.getElementById('renderProgressBar')
+      const pctEl = document.getElementById('renderPct')
+      const txt   = document.getElementById('renderStatusText')
+      if (bar)   bar.style.width = pct + '%'
+      if (pctEl) pctEl.textContent = Math.round(pct) + '%'
+      if (txt)   txt.textContent = msg || ''
+    }
+
+    setProgress(5, '오디오 로딩 중...')
+    const audioCtxDecode = new (window.AudioContext || window.webkitAudioContext)()
+    const audioResp = await fetch(audioSrc)
+    const audioArrayBuf = await audioResp.arrayBuffer()
+    const audioBuffer = await audioCtxDecode.decodeAudioData(audioArrayBuf)
+    const duration = audioBuffer.duration || 20
+    await audioCtxDecode.close()
 
     // ── 자막 세그먼트 생성 ────────────────────────────────────────
-    // TTS 앞 무음 패딩 오프셋: 실제 Typecast TTS는 약 0.3~0.5초 앞에 무음
-    const TTS_PADDING_OFFSET = 0.35  // 무음 패딩 (초)
+    const TTS_PADDING_OFFSET = 0.35
     const segments = this._buildSubtitleSegments(script, duration, ctx, fontSize, W, TTS_PADDING_OFFSET)
 
-    // ── MediaRecorder (webm 녹화) ─────────────────────────────
+    setProgress(10, 'MP4 인코더 초기화 중...')
+
+    // ── mp4-muxer 로드 ────────────────────────────────────────────
+    if (!window.Mp4Muxer) {
+      await new Promise((resolve, reject) => {
+        const s = document.createElement('script')
+        s.src = 'https://unpkg.com/mp4-muxer@5.2.2/build/mp4-muxer.js'
+        s.onload = resolve
+        s.onerror = reject
+        document.head.appendChild(s)
+      })
+    }
+
+    // ── WebCodecs 지원 여부 확인 → 미지원시 MediaRecorder 폴백 ──
+    const supportsWebCodecs = typeof VideoEncoder !== 'undefined' && typeof AudioEncoder !== 'undefined'
+    if (!supportsWebCodecs || !window.Mp4Muxer) {
+      setProgress(12, 'WebCodecs 미지원 → MediaRecorder 방식으로 진행...')
+      return await this._renderWithMediaRecorder(
+        canvas, ctx, W, H, bgVideo, hasBgVideo, audioSrc, duration,
+        segments, fontSize, fontColor, hasBgBar, position, fontFamily, bgColor, setProgress
+      )
+    }
+
+    setProgress(15, 'H.264 인코더 설정 중...')
+
+    // ── VideoEncoder + AudioEncoder + Muxer ───────────────────────
+    const FPS = 30
+    const { Muxer, ArrayBufferTarget } = window.Mp4Muxer
+
+    const target = new ArrayBufferTarget()
+    const muxer  = new Muxer({
+      target,
+      video: { codec: 'avc', width: W, height: H },
+      audio: { codec: 'aac', sampleRate: audioBuffer.sampleRate, numberOfChannels: audioBuffer.numberOfChannels },
+      fastStart: 'in-memory',
+    })
+
+    // VideoEncoder 설정
+    const videoEncoder = new VideoEncoder({
+      output: (chunk, meta) => muxer.addVideoChunk(chunk, meta),
+      error: (e) => console.error('VideoEncoder error:', e),
+    })
+    videoEncoder.configure({
+      codec:              'avc1.42001f',   // H.264 Baseline 3.1 — 모든 기기 호환
+      width:              W,
+      height:             H,
+      framerate:          FPS,
+      bitrate:            4_000_000,
+      latencyMode:        'quality',
+    })
+
+    // AudioEncoder 설정
+    const audioEncoder = new AudioEncoder({
+      output: (chunk, meta) => muxer.addAudioChunk(chunk, meta),
+      error: (e) => console.error('AudioEncoder error:', e),
+    })
+    audioEncoder.configure({
+      codec:         'mp4a.40.2',   // AAC-LC
+      sampleRate:    audioBuffer.sampleRate,
+      numberOfChannels: audioBuffer.numberOfChannels,
+      bitrate:       128_000,
+    })
+
+    // ── 오디오 인코딩 (AudioBuffer → AudioData 청크) ──────────────
+    setProgress(20, '오디오 인코딩 중...')
+    const AUDIO_CHUNK = 4096
+    const sampleRate  = audioBuffer.sampleRate
+    const nCh         = audioBuffer.numberOfChannels
+    const totalSamples = audioBuffer.length
+
+    // 채널 데이터 추출
+    const channelData = []
+    for (let c = 0; c < nCh; c++) channelData.push(audioBuffer.getChannelData(c))
+
+    for (let offset = 0; offset < totalSamples; offset += AUDIO_CHUNK) {
+      if (this._renderCancelFlag) { videoEncoder.close(); audioEncoder.close(); muxer.finalize(); return null }
+      const frameCount = Math.min(AUDIO_CHUNK, totalSamples - offset)
+      const timestamp  = Math.round(offset / sampleRate * 1_000_000)  // µs
+
+      // interleaved Float32 → AudioData
+      const interleaved = new Float32Array(frameCount * nCh)
+      for (let i = 0; i < frameCount; i++) {
+        for (let c = 0; c < nCh; c++) {
+          interleaved[i * nCh + c] = channelData[c][offset + i]
+        }
+      }
+      const audioData = new AudioData({
+        format:         'f32',
+        sampleRate,
+        numberOfChannels: nCh,
+        numberOfFrames: frameCount,
+        timestamp,
+        data:           interleaved,
+      })
+      audioEncoder.encode(audioData)
+      audioData.close()
+    }
+    await audioEncoder.flush()
+    audioEncoder.close()
+
+    // ── 비디오 프레임 렌더링 ──────────────────────────────────────
+    setProgress(30, '비디오 프레임 렌더링 중...')
+    const totalFrames = Math.ceil(duration * FPS)
+
+    for (let f = 0; f < totalFrames; f++) {
+      if (this._renderCancelFlag) { videoEncoder.close(); muxer.finalize(); return null }
+
+      const t = f / FPS   // 현재 시간(초)
+
+      // 배경 그리기
+      if (hasBgVideo) {
+        bgVideo.currentTime = t % (bgVideo.duration || duration)
+        const vw = bgVideo.videoWidth  || W
+        const vh = bgVideo.videoHeight || H
+        const scale = Math.max(W / vw, H / vh)
+        const dw = vw * scale, dh = vh * scale
+        ctx.drawImage(bgVideo, (W - dw) / 2, (H - dh) / 2, dw, dh)
+      } else {
+        const grad = ctx.createLinearGradient(0, 0, 0, H)
+        grad.addColorStop(0, '#0d0820')
+        grad.addColorStop(0.5, '#1a0a3a')
+        grad.addColorStop(1, '#0a0515')
+        ctx.fillStyle = grad
+        ctx.fillRect(0, 0, W, H)
+      }
+
+      // 자막 그리기
+      const seg = segments.find(s => t >= s.start && t < s.end)
+      if (seg) {
+        const lines = seg.text.split('\n').filter(Boolean)
+        this._drawSubtitle(ctx, lines, W, H, fontSize, fontColor, hasBgBar, position, fontFamily, bgColor)
+      }
+
+      // VideoFrame 인코딩
+      const timestamp = Math.round(f / FPS * 1_000_000)   // µs
+      const frame = new VideoFrame(canvas, { timestamp, duration: Math.round(1_000_000 / FPS) })
+      videoEncoder.encode(frame, { keyFrame: f % (FPS * 2) === 0 })
+      frame.close()
+
+      // 진행률 업데이트 (30~90%)
+      if (f % 15 === 0) {
+        const pct = 30 + (f / totalFrames) * 60
+        setProgress(pct, `프레임 렌더링... ${f}/${totalFrames}`)
+        // 브라우저 숨쉴 시간 (매 30프레임마다 yield)
+        if (f % 30 === 0) await new Promise(r => setTimeout(r, 0))
+      }
+    }
+
+    setProgress(92, 'MP4 파일 생성 중...')
+    await videoEncoder.flush()
+    videoEncoder.close()
+    muxer.finalize()
+
+    const { buffer } = target
+    const mp4Blob    = new Blob([buffer], { type: 'video/mp4' })
+
+    setProgress(100, '✅ H.264 MP4 완성! (인스타·틱톡 완전 호환)')
+    return { url: URL.createObjectURL(mp4Blob), isH264: true }
+  },
+
+  // ── WebCodecs 미지원 폴백: MediaRecorder 방식 ─────────────────
+  async _renderWithMediaRecorder(
+    canvas, ctx, W, H, bgVideo, hasBgVideo, audioSrc, duration,
+    segments, fontSize, fontColor, hasBgBar, position, fontFamily, bgColor, setProgress
+  ) {
+    setProgress(15, 'MediaRecorder 방식으로 렌더링...')
+
+    const audio = new Audio(audioSrc)
+    audio.crossOrigin = 'anonymous'
+    await new Promise((res, rej) => { audio.onloadedmetadata = () => res(null); audio.onerror = rej; audio.load() })
+
     const stream   = canvas.captureStream(30)
     const audioCtx = new (window.AudioContext || window.webkitAudioContext)()
     const src      = audioCtx.createMediaElementSource(audio)
@@ -2235,162 +2410,75 @@ const App = {
         ? 'video/webm;codecs=vp8,opus'
         : 'video/webm'
 
-    const recorder = new MediaRecorder(stream, { mimeType, videoBitsPerSecond: 5000000 })
+    const recorder = new MediaRecorder(stream, { mimeType, videoBitsPerSecond: 5_000_000 })
     const chunks   = []
     recorder.ondataavailable = e => { if (e.data.size > 0) chunks.push(e.data) }
 
-    // ── 진행 업데이트 헬퍼 ───────────────────────────────────────
-    const setProgress = (pct, msg) => {
-      const bar   = document.getElementById('renderProgressBar')
-      const pctEl = document.getElementById('renderPct')
-      const txt   = document.getElementById('renderStatusText')
-      if (bar)   bar.style.width = pct + '%'
-      if (pctEl) pctEl.textContent = Math.round(pct) + '%'
-      if (txt)   txt.textContent = msg || ''
-    }
-
-    // ── 렌더링 시작 ──────────────────────────────────────────────
     recorder.start(100)
     audio.currentTime = 0
     audio.play()
-    setProgress(5, '영상 렌더링 시작...')
+    setProgress(20, '영상 렌더링 시작...')
 
     let animFrame
     const startTime = performance.now()
 
-    const drawFrame = () => {
-      if (this._renderCancelFlag) {
-        cancelAnimationFrame(animFrame)
-        recorder.stop()
-        audio.pause()
-        try { audioCtx.close() } catch(e) {}
-        return
-      }
-      const elapsed = (performance.now() - startTime) / 1000
-      const pct     = Math.min(elapsed / duration * 100 * 0.6, 60)
-      setProgress(pct, `렌더링 중... ${elapsed.toFixed(1)}s / ${duration.toFixed(1)}s`)
+    await new Promise((resolve) => {
+      const drawFrame = () => {
+        if (this._renderCancelFlag) {
+          cancelAnimationFrame(animFrame)
+          recorder.stop()
+          audio.pause()
+          try { audioCtx.close() } catch(e) {}
+          resolve()
+          return
+        }
+        const elapsed = (performance.now() - startTime) / 1000
+        setProgress(20 + Math.min(elapsed / duration * 70, 70), `렌더링 중... ${elapsed.toFixed(1)}s / ${duration.toFixed(1)}s`)
 
-      // ── 배경 그리기 ────────────────────────────────────────────
-      if (hasBgVideo) {
-        // 원본 영상: Cover 방식으로 9:16 캔버스에 꽉 채움
-        const vw = bgVideo.videoWidth  || W
-        const vh = bgVideo.videoHeight || H
-        const scale = Math.max(W / vw, H / vh)
-        const dw = vw * scale
-        const dh = vh * scale
-        const dx = (W - dw) / 2
-        const dy = (H - dh) / 2
-        ctx.drawImage(bgVideo, dx, dy, dw, dh)
-      } else {
-        // 기본 그라데이션 배경
-        const grad = ctx.createLinearGradient(0, 0, 0, H)
-        grad.addColorStop(0, '#0d0820')
-        grad.addColorStop(0.5, '#160c30')
-        grad.addColorStop(1, '#0d0820')
-        ctx.fillStyle = grad
-        ctx.fillRect(0, 0, W, H)
+        if (hasBgVideo) {
+          const vw = bgVideo.videoWidth  || W
+          const vh = bgVideo.videoHeight || H
+          const scale = Math.max(W / vw, H / vh)
+          const dw = vw * scale, dh = vh * scale
+          ctx.drawImage(bgVideo, (W - dw) / 2, (H - dh) / 2, dw, dh)
+        } else {
+          const grad = ctx.createLinearGradient(0, 0, 0, H)
+          grad.addColorStop(0, '#0d0820')
+          grad.addColorStop(0.5, '#1a0a3a')
+          grad.addColorStop(1, '#0a0515')
+          ctx.fillStyle = grad
+          ctx.fillRect(0, 0, W, H)
+        }
 
-        // 파형 데코레이션
-        for (let i = 0; i < 36; i++) {
-          const x = (W / 36) * i + W / 72
-          const h = 18 + Math.sin(elapsed * 2.5 + i * 0.55) * 14 + Math.random() * 8
-          ctx.fillStyle = `rgba(124,58,237,${0.12 + Math.sin(elapsed + i) * 0.08})`
-          ctx.fillRect(x - 3, H / 2 - h / 2, 6, h)
+        const seg = segments.find(s => elapsed >= s.start && elapsed < s.end)
+        if (seg) {
+          const lines = seg.text.split('\n').filter(Boolean)
+          this._drawSubtitle(ctx, lines, W, H, fontSize, fontColor, hasBgBar, position, fontFamily, bgColor)
+        }
+
+        if (elapsed < duration + 0.3) {
+          animFrame = requestAnimationFrame(drawFrame)
+        } else {
+          cancelAnimationFrame(animFrame)
+          recorder.stop()
+          audio.pause()
+          try { audioCtx.close() } catch(e) {}
         }
       }
+      requestAnimationFrame(drawFrame)
 
-      // ── 자막 렌더링 ───────────────────────────────────────────
-      const seg = segments.find(s => elapsed >= s.start && elapsed < s.end)
-      if (seg) {
-        this._drawSubtitle(ctx, seg.lines, W, H, fontSize, fontColor, hasBgBar, position, fontFamily, bgColor)
-      }
-
-      if (elapsed < duration + 0.2) {
-        animFrame = requestAnimationFrame(drawFrame)
-      }
-    }
-
-    animFrame = requestAnimationFrame(drawFrame)
-
-    await new Promise(res => {
-      audio.onended = () => res(null)
-      setTimeout(() => res(null), (duration + 1) * 1000)
+      recorder.onstop = () => resolve()
     })
 
-    cancelAnimationFrame(animFrame)
-    setProgress(62, 'webm 녹화 완료...')
-    recorder.stop()
+    if (this._renderCancelFlag) return null
 
-    await new Promise(res => { recorder.onstop = () => res(null) })
-    audio.pause()
-    try { audioCtx.close() } catch(e) {}
-
-    const webmBlob = new Blob(chunks, { type: mimeType })
-
-    // ── FFmpeg.wasm → H.264 MP4 변환 ────────────────────────────
-    try {
-      setProgress(65, 'MP4 변환 준비 중...')
-      // FFmpeg가 아직 안 로드됐으면 동적 로드
-      if (!window.FFmpegWASM && window.loadFFmpeg) {
-        try { await window.loadFFmpeg() } catch(e) { /* 로드 실패 시 webm 폴백 */ }
-      }
-      const { FFmpeg } = window.FFmpegWASM || {}
-      const { fetchFile } = window.FFmpegUtil || {}
-
-      if (!FFmpeg || !fetchFile) {
-        // FFmpeg 없음 → webm 원본을 그대로 반환 (확장자 .webm 유지)
-        setProgress(100, '완료! (webm 형식)')
-        this.showToast('⚠️ MP4 변환 불가 — .webm 파일로 저장됩니다.\n인스타·틱톡 업로드 시 PC에서 변환 후 사용하세요.', 'info', 6000)
-        return { url: URL.createObjectURL(webmBlob), isH264: false }
-      }
-
-      const ffmpeg = new FFmpeg()
-      ffmpeg.on('progress', ({ progress }) => {
-        setProgress(65 + progress * 33, `MP4 변환 중... ${Math.round(progress * 100)}%`)
-      })
-
-      setProgress(68, 'FFmpeg 코어 로드 중...')
-      await ffmpeg.load({
-        coreURL: 'https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.6/dist/umd/ffmpeg-core.js',
-        wasmURL: 'https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.6/dist/umd/ffmpeg-core.wasm',
-      })
-
-      setProgress(75, '영상 데이터 전달 중...')
-      await ffmpeg.writeFile('input.webm', await fetchFile(webmBlob))
-
-      setProgress(80, 'H.264 MP4 인코딩 중... (인스타·틱톡 호환)')
-      // H.264 + AAC 리인코딩 → 모바일 앱 완전 호환
-      await ffmpeg.exec([
-        '-i', 'input.webm',
-        '-c:v', 'libx264',      // H.264 비디오 코덱 (모든 플랫폼 호환)
-        '-preset', 'ultrafast', // 인코딩 속도 우선 (브라우저 환경)
-        '-crf', '23',           // 화질 (18=최고, 28=최저, 23=기본)
-        '-profile:v', 'baseline', // iOS 호환 프로파일
-        '-level', '3.1',        // 광범위 디바이스 호환
-        '-pix_fmt', 'yuv420p',  // 색상 포맷 (iOS/안드로이드 필수)
-        '-c:a', 'aac',          // AAC 오디오 (모바일 표준)
-        '-b:a', '128k',
-        '-movflags', '+faststart', // 웹 스트리밍 최적화
-        'output.mp4'
-      ])
-
-      setProgress(96, '파일 생성 중...')
-      const mp4Data = await ffmpeg.readFile('output.mp4')
-      const mp4Blob = new Blob([mp4Data.buffer], { type: 'video/mp4' })
-      await ffmpeg.deleteFile('input.webm')
-      await ffmpeg.deleteFile('output.mp4')
-
-      setProgress(100, '✅ H.264 MP4 완성! (인스타·틱톡 호환)')
-      return { url: URL.createObjectURL(mp4Blob), isH264: true }
-
-    } catch (err) {
-      console.error('FFmpeg 변환 실패:', err)
-      // 변환 실패 → webm 원본 반환 + 안내
-      setProgress(100, '완료! (webm 형식 — 변환 실패)')
-      this.showToast('⚠️ H.264 변환 실패 — .webm으로 저장됩니다.\n인스타·틱톡 업로드는 PC에서 MP4 변환 후 사용하세요.', 'info', 6000)
-      return { url: URL.createObjectURL(webmBlob), isH264: false }
-    }
+    setProgress(92, 'WebM 파일 처리 중...')
+    const webmBlob = new Blob(chunks, { type: 'video/webm' })
+    setProgress(100, '완료 (WebM — PC에서 MP4 변환 권장)')
+    this.showToast('⚠️ 이 브라우저는 H.264 직접 인코딩 미지원.\n.webm으로 저장됩니다. PC Chrome에서 생성하면 MP4로 저장됩니다.', 'info', 7000)
+    return { url: URL.createObjectURL(webmBlob), isH264: false }
   },
+
 
   // ── 배경 영상 로드 헬퍼 ────────────────────────────────────────
   _loadBgVideo(file) {
@@ -2984,7 +3072,7 @@ const App = {
     }
   },
 
-  // ── 내부: 오디오 없이 자막만 Canvas 합성 ─────────────────────
+  // ── 내부: 오디오 없이 자막만 Canvas 합성 (WebCodecs 우선) ────
   async _renderSubtitleVideoNoAudio() {
     const job    = this.state.currentJob
     const script = job.script_content || ''
@@ -3004,45 +3092,72 @@ const App = {
     canvas.width = W; canvas.height = H
     const ctx = canvas.getContext('2d')
 
-    const bgVideo = this.state.bgVideoFile ? await this._loadBgVideo(this.state.bgVideoFile) : null
+    const bgVideo    = this.state.bgVideoFile ? await this._loadBgVideo(this.state.bgVideoFile) : null
     const hasBgVideo = !!bgVideo
 
-    // 무음 영상 총 길이 = 자막 세그먼트 기준 (약 20초 기본)
     const estimatedDuration = Math.max(15, Math.round(script.length / 5))
     const segments = this._buildSubtitleSegments(script, estimatedDuration, ctx, fontSize, W)
 
-    const stream = canvas.captureStream(30)
-    const mimeType = MediaRecorder.isTypeSupported('video/webm;codecs=vp9')
-      ? 'video/webm;codecs=vp9' : 'video/webm'
-    const recorder = new MediaRecorder(stream, { mimeType, videoBitsPerSecond: 4000000 })
-    const chunks = []
-    recorder.ondataavailable = e => { if (e.data.size > 0) chunks.push(e.data) }
-
     const setProgress = (pct, msg) => {
-      const bar = document.getElementById('renderProgressBar')
+      const bar   = document.getElementById('renderProgressBar')
       const pctEl = document.getElementById('renderPct')
-      const txt = document.getElementById('renderStatusText')
+      const txt   = document.getElementById('renderStatusText')
       if (bar)   bar.style.width = pct + '%'
       if (pctEl) pctEl.textContent = Math.round(pct) + '%'
       if (txt)   txt.textContent = msg || ''
     }
 
-    recorder.start(100)
-    setProgress(5, '영상 렌더링 시작...')
+    // ── mp4-muxer 로드 ────────────────────────────────────────────
+    if (!window.Mp4Muxer) {
+      try {
+        await new Promise((resolve, reject) => {
+          const s = document.createElement('script')
+          s.src = 'https://unpkg.com/mp4-muxer@5.2.2/build/mp4-muxer.js'
+          s.onload = resolve; s.onerror = reject
+          document.head.appendChild(s)
+        })
+      } catch(e) {}
+    }
 
-    const startTime = performance.now()
-    let animFrame
+    const supportsWebCodecs = typeof VideoEncoder !== 'undefined' && !!window.Mp4Muxer
+    if (supportsWebCodecs) {
+      // ── WebCodecs 경로: 비디오만 (오디오 없음) ─────────────────
+      setProgress(5, 'H.264 인코더 초기화 중...')
+      const FPS = 30
+      const { Muxer, ArrayBufferTarget } = window.Mp4Muxer
+      const target = new ArrayBufferTarget()
+      const muxer  = new Muxer({
+        target,
+        video: { codec: 'avc', width: W, height: H },
+        fastStart: 'in-memory',
+      })
 
-    await new Promise(resolve => {
-      const drawFrame = () => {
-        const elapsed = (performance.now() - startTime) / 1000
-        const pct = Math.min(elapsed / estimatedDuration * 90, 90)
-        setProgress(pct, `렌더링 중... ${elapsed.toFixed(1)}s / ${estimatedDuration}s`)
+      const videoEncoder = new VideoEncoder({
+        output: (chunk, meta) => muxer.addVideoChunk(chunk, meta),
+        error:  (e) => console.error('VideoEncoder error:', e),
+      })
+      videoEncoder.configure({
+        codec:       'avc1.42001f',
+        width:       W,
+        height:      H,
+        framerate:   FPS,
+        bitrate:     4_000_000,
+        latencyMode: 'quality',
+      })
+
+      setProgress(10, '비디오 프레임 렌더링 중...')
+      const totalFrames = Math.ceil(estimatedDuration * FPS)
+
+      for (let f = 0; f < totalFrames; f++) {
+        if (this._renderCancelFlag) { videoEncoder.close(); muxer.finalize(); return null }
+        const t = f / FPS
+        const elapsed = t
 
         if (hasBgVideo) {
+          bgVideo.currentTime = t % (bgVideo.duration || estimatedDuration)
           const vw = bgVideo.videoWidth || W, vh = bgVideo.videoHeight || H
           const scale = Math.max(W / vw, H / vh)
-          ctx.drawImage(bgVideo, (W - vw * scale) / 2, (H - vh * scale) / 2, vw * scale, vh * scale)
+          ctx.drawImage(bgVideo, (W - vw*scale)/2, (H - vh*scale)/2, vw*scale, vh*scale)
         } else {
           const grad = ctx.createLinearGradient(0, 0, 0, H)
           grad.addColorStop(0, '#0d0820'); grad.addColorStop(0.5, '#160c30'); grad.addColorStop(1, '#0d0820')
@@ -3055,62 +3170,80 @@ const App = {
           }
         }
 
-        const seg = segments.find(s => elapsed >= s.start && elapsed < s.end)
-        if (seg) this._drawSubtitle(ctx, seg.lines, W, H, fontSize, fontColor, hasBgBar, position, fontFamily, bgColor)
+        const seg = segments.find(s => t >= s.start && t < s.end)
+        if (seg) {
+          const lines = seg.text ? seg.text.split('\n').filter(Boolean) : (seg.lines || [])
+          this._drawSubtitle(ctx, lines, W, H, fontSize, fontColor, hasBgBar, position, fontFamily, bgColor)
+        }
 
-        if (elapsed < estimatedDuration + 0.2) {
-          animFrame = requestAnimationFrame(drawFrame)
-        } else {
-          resolve(null)
+        const timestamp = Math.round(f / FPS * 1_000_000)
+        const frame = new VideoFrame(canvas, { timestamp, duration: Math.round(1_000_000 / FPS) })
+        videoEncoder.encode(frame, { keyFrame: f % (FPS * 2) === 0 })
+        frame.close()
+
+        if (f % 15 === 0) {
+          setProgress(10 + (f / totalFrames) * 82, `프레임 렌더링... ${f}/${totalFrames}`)
+          if (f % 30 === 0) await new Promise(r => setTimeout(r, 0))
         }
       }
+
+      setProgress(94, 'MP4 파일 생성 중...')
+      await videoEncoder.flush()
+      videoEncoder.close()
+      muxer.finalize()
+
+      const mp4Blob = new Blob([target.buffer], { type: 'video/mp4' })
+      setProgress(100, '✅ H.264 MP4 완성! (인스타·틱톡 호환)')
+      return URL.createObjectURL(mp4Blob)
+    }
+
+    // ── MediaRecorder 폴백 (WebCodecs 미지원 브라우저) ───────────
+    setProgress(5, 'MediaRecorder 방식으로 렌더링...')
+    const stream  = canvas.captureStream(30)
+    const mimeType = MediaRecorder.isTypeSupported('video/webm;codecs=vp9')
+      ? 'video/webm;codecs=vp9' : 'video/webm'
+    const recorder = new MediaRecorder(stream, { mimeType, videoBitsPerSecond: 4_000_000 })
+    const chunks  = []
+    recorder.ondataavailable = e => { if (e.data.size > 0) chunks.push(e.data) }
+
+    recorder.start(100)
+    const startTime = performance.now()
+    let animFrame
+
+    await new Promise(resolve => {
+      const drawFrame = () => {
+        const elapsed = (performance.now() - startTime) / 1000
+        setProgress(Math.min(elapsed / estimatedDuration * 90, 90), `렌더링 중... ${elapsed.toFixed(1)}s`)
+
+        if (hasBgVideo) {
+          const vw = bgVideo.videoWidth || W, vh = bgVideo.videoHeight || H
+          const scale = Math.max(W / vw, H / vh)
+          ctx.drawImage(bgVideo, (W - vw*scale)/2, (H - vh*scale)/2, vw*scale, vh*scale)
+        } else {
+          const grad = ctx.createLinearGradient(0, 0, 0, H)
+          grad.addColorStop(0, '#0d0820'); grad.addColorStop(0.5, '#160c30'); grad.addColorStop(1, '#0d0820')
+          ctx.fillStyle = grad; ctx.fillRect(0, 0, W, H)
+        }
+
+        const seg = segments.find(s => elapsed >= s.start && elapsed < s.end)
+        if (seg) {
+          const lines = seg.text ? seg.text.split('\n').filter(Boolean) : (seg.lines || [])
+          this._drawSubtitle(ctx, lines, W, H, fontSize, fontColor, hasBgBar, position, fontFamily, bgColor)
+        }
+
+        if (elapsed < estimatedDuration + 0.2) animFrame = requestAnimationFrame(drawFrame)
+        else resolve(null)
+      }
       animFrame = requestAnimationFrame(drawFrame)
+      recorder.onstop = () => resolve(null)
     })
 
     cancelAnimationFrame(animFrame)
     recorder.stop()
     await new Promise(res => { recorder.onstop = () => res(null) })
-    setProgress(70, 'webm 완성, MP4 변환 중...')
 
-    const webmBlob = new Blob(chunks, { type: mimeType })
-
-    // NoTTS도 H.264 MP4로 변환 (모바일 호환)
-    try {
-      if (!window.FFmpegWASM && window.loadFFmpeg) {
-        try { await window.loadFFmpeg() } catch(e) {}
-      }
-      const { FFmpeg } = window.FFmpegWASM || {}
-      const { fetchFile } = window.FFmpegUtil || {}
-      if (FFmpeg && fetchFile) {
-        const ffmpeg = new FFmpeg()
-        ffmpeg.on('progress', ({ progress }) => {
-          setProgress(70 + progress * 28, `H.264 변환 중... ${Math.round(progress*100)}%`)
-        })
-        await ffmpeg.load({
-          coreURL: 'https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.6/dist/umd/ffmpeg-core.js',
-          wasmURL: 'https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.6/dist/umd/ffmpeg-core.wasm',
-        })
-        await ffmpeg.writeFile('input.webm', await fetchFile(webmBlob))
-        await ffmpeg.exec([
-          '-i','input.webm',
-          '-c:v','libx264','-preset','ultrafast','-crf','23',
-          '-profile:v','baseline','-level','3.1',
-          '-pix_fmt','yuv420p',
-          '-an',              // NoTTS: 오디오 없음
-          '-movflags','+faststart',
-          'output.mp4'
-        ])
-        const mp4Data = await ffmpeg.readFile('output.mp4')
-        const mp4Blob = new Blob([mp4Data.buffer], { type: 'video/mp4' })
-        await ffmpeg.deleteFile('input.webm')
-        await ffmpeg.deleteFile('output.mp4')
-        setProgress(100, '✅ H.264 MP4 완성!')
-        return URL.createObjectURL(mp4Blob)
-      }
-    } catch(e) { console.warn('NoTTS ffmpeg 변환 실패:', e) }
-
-    setProgress(100, '✅ 완성! (webm 형식)')
-    return URL.createObjectURL(webmBlob)
+    setProgress(100, '완료 (WebM)')
+    return URL.createObjectURL(new Blob(chunks, { type: 'video/webm' }))
   },
 
   // ── YouTube/SNS 섹션 HTML (워크스페이스 인라인용) ────────────
