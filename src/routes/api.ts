@@ -548,11 +548,30 @@ apiRoutes.post('/jobs/:job_id/generate-tts', async (c) => {
 
     if (!ttsResponse.ok) {
       const errText = await ttsResponse.text()
+      let errCode = ''
       let errMsg = `Typecast TTS 오류 (${ttsResponse.status})`
       try {
         const errJson = JSON.parse(errText)
+        errCode = errJson.error_code || ''
         errMsg = errJson.message || errJson.error || errMsg
       } catch {}
+      // 402 크레딧 부족 → 명확한 안내
+      if (ttsResponse.status === 402 || errCode === 'QUOTA_INSUFFICIENT') {
+        return c.json({
+          ok: false,
+          error: 'Typecast 크레딧이 부족합니다. Typecast 대시보드(typecast.ai)에서 크레딧을 충전해 주세요.',
+          error_code: 'QUOTA_INSUFFICIENT',
+          hint: 'https://typecast.ai 로그인 → 크레딧 충전'
+        }, 402)
+      }
+      // 401 인증 실패
+      if (ttsResponse.status === 401) {
+        return c.json({
+          ok: false,
+          error: 'Typecast API 키가 유효하지 않습니다. 키를 다시 확인해 주세요.',
+          error_code: 'INVALID_API_KEY'
+        }, 401)
+      }
       return c.json({ ok: false, error: errMsg, detail: errText }, 500)
     }
 

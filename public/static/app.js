@@ -520,10 +520,11 @@ const App = {
     const stageIdx  = stages.findIndex(s => s.key === stage)
     const progress  = stages[stageIdx]?.pct ?? 0
 
-    const hasScript = !!currentJob?.script_content
-    const hasTTS    = !!currentJob?.tts_audio_url
-    const hasVideo  = !!currentJob?.output_video_url
-    const charCount = hasScript ? currentJob.script_content.length : 0
+    const hasScript  = !!currentJob?.script_content
+    const hasTTS     = !!currentJob?.tts_audio_url
+    const hasVideo   = !!currentJob?.output_video_url  // 이전 합성 결과
+    const hasBgVideo = !!state.bgVideoFile             // 업로드된 원본 영상
+    const charCount  = hasScript ? currentJob.script_content.length : 0
     const isRendering = state.isRendering || false
 
     return `
@@ -770,7 +771,7 @@ const App = {
           <div style="background:rgba(16,185,129,0.05);border:1px solid rgba(16,185,129,0.2);border-radius:10px;padding:1rem;text-align:center;margin-bottom:0.75rem">
             <div style="font-size:2rem;margin-bottom:0.5rem">🎬</div>
             <div style="font-size:0.85rem;font-weight:700;color:#10b981;margin-bottom:0.3rem">자막 합성 영상 완성!</div>
-            <div style="font-size:0.72rem;color:var(--text-muted);margin-bottom:0.75rem">TTS 음성 + 자막이 합성된 영상입니다</div>
+            <div style="font-size:0.72rem;color:var(--text-muted);margin-bottom:0.75rem">${hasTTS ? 'TTS 음성 + 자막이 합성된 영상입니다' : '자막 합성 영상입니다 (TTS 없음)'}</div>
             <a href="${currentJob.output_video_url}" download="${currentJob._videoIsMP4 === false ? 'aistudio_output.webm' : 'aistudio_output.mp4'}"
               style="display:inline-flex;align-items:center;gap:0.4rem;background:#10b981;color:white;padding:0.55rem 1.2rem;border-radius:8px;text-decoration:none;font-size:0.82rem;font-weight:700">
               <i class="fas fa-download"></i> ${currentJob._videoIsMP4 === false ? 'WebM 다운로드' : 'MP4 다운로드 (인스타·틱톡 호환)'}
@@ -888,7 +889,7 @@ const App = {
               style="width:100%;padding:0.65rem;background:linear-gradient(135deg,${isRendering ? '#ef4444,#dc2626' : '#fb923c,#f97316'});border:none;color:white;border-radius:8px;cursor:pointer;font-size:0.82rem;font-weight:700;display:flex;align-items:center;justify-content:center;gap:0.5rem">
               ${isRendering
                 ? `<span class="spinner" style="width:14px;height:14px;border-width:2px"></span> 합성 중... (클릭하여 중단)`
-                : `<i class="fas fa-redo"></i> ${state.bgVideoFile ? '업로드된 영상 + 자막 재합성' : '자막 설정 적용 후 재합성'}`}
+                : `<i class="fas fa-redo"></i> ${state.bgVideoFile ? '업로드된 영상 & 자막 재합성' + (hasTTS ? ' (TTS 포함)' : ' (TTS 없이)') : '자막 설정 적용 후 재합성' + (hasTTS ? ' (TTS 포함)' : ' (TTS 없이)')}`}
             </button>
           </div>
         ` : hasTTS ? `
@@ -1092,7 +1093,9 @@ const App = {
               <button id="btnSynthStart" class="btn-generate" style="font-size:0.85rem;padding:0.7rem 1.5rem;background:linear-gradient(135deg,${isRendering ? '#ef4444,#dc2626' : '#fb923c,#f97316'})">
                 ${isRendering
                   ? `<span class="spinner" style="width:15px;height:15px;border-width:2px"></span>&nbsp; 합성 중... <span style="font-size:0.72rem;opacity:0.85;margin-left:4px">(클릭하여 중단)</span>`
-                  : `<i class="fas fa-film"></i> 자막+TTS 영상 합성 시작`}
+                  : hasBgVideo
+                    ? `<i class="fas fa-film"></i> 영상 &amp; 자막 합성하기 (TTS 포함)`
+                    : `<i class="fas fa-film"></i> 영상 &amp; 자막 합성하기 (그라데이션 배경)`}
               </button>
               <div style="font-size:0.68rem;color:var(--text-muted);margin-top:0.4rem">
                 브라우저에서 직접 렌더링 · 약 20~40초 소요
@@ -1169,7 +1172,9 @@ const App = {
             <button id="btnSynthNoTTS" class="btn-generate" style="font-size:0.82rem;padding:0.65rem 1.2rem;background:linear-gradient(135deg,${isRendering ? '#ef4444,#dc2626' : '#fb923c,#f97316'})">
               ${isRendering
                 ? `<span class="spinner" style="width:14px;height:14px;border-width:2px"></span> 합성 중... <span style="font-size:0.72rem;opacity:0.85;margin-left:4px">(클릭하여 중단)</span>`
-                : `<i class="fas fa-film"></i> 자막만 합성 (TTS 없이)`}
+                : hasBgVideo
+                  ? `<i class="fas fa-film"></i> 영상 &amp; 자막 합성하기 (TTS 없이)`
+                  : `<i class="fas fa-film"></i> 자막만 합성 (그라데이션 배경)`}
             </button>
           </div>
         `}
@@ -1747,8 +1752,31 @@ const App = {
         const emotionLabel = this.emotionOptions.find(e => e.value === res.data.data.emotion)?.label || res.data.data.emotion
         this.showToast(`TTS 생성 완료! 🎙️ 감정: ${emotionLabel}`, 'success')
       } else {
-        const hint = res.data.hint ? `\n힌트: ${res.data.hint}` : ''
-        this.showToast((res.data.error || 'TTS 생성 실패') + hint, 'error')
+        const errCode = res.data.error_code || ''
+        if (errCode === 'QUOTA_INSUFFICIENT') {
+          // 크레딧 부족 — 모달로 안내
+          await this._showConfirmModal({
+            emoji: '💳',
+            title: 'Typecast API 크레딧이 부족합니다',
+            body:  '<div style="font-size:0.82rem;line-height:1.7">' +
+                   '결제는 완료되었지만 <strong style="color:#ef4444">API 전용 크레딧</strong>이 소진되었습니다.<br><br>' +
+                   '⚠️ <strong style="color:#fbbf24">일반 구독과 API 크레딧은 별도</strong>입니다.<br>' +
+                   'Typecast 웹사이트 이용권과 API 사용 크레딧은 분리되어 있어요.<br><br>' +
+                   '✅ 해결 방법:<br>' +
+                   '1. <a href="https://typecast.ai" target="_blank" style="color:#a78bfa;text-decoration:underline">typecast.ai</a> 로그인<br>' +
+                   '2. 설정 → API → 크레딧 충전<br>' +
+                   '3. 충전 후 다시 TTS 생성 시도<br><br>' +
+                   '<span style="color:var(--text-muted);font-size:0.75rem">문의: Typecast 고객센터 또는 이메일 문의</span>' +
+                   '</div>',
+            cancelText: '닫기',
+            okText: '💳 typecast.ai에서 크레딧 충전',
+          }).then(ok => { if (ok) window.open('https://typecast.ai', '_blank') })
+        } else if (errCode === 'INVALID_API_KEY') {
+          this.showToast('Typecast API 키가 유효하지 않습니다. 키를 다시 확인해주세요.', 'error', 6000)
+        } else {
+          const hint = res.data.hint ? `\n힌트: ${res.data.hint}` : ''
+          this.showToast((res.data.error || 'TTS 생성 실패') + hint, 'error', 5000)
+        }
       }
     } catch (e) {
       if (e.name !== 'AbortError' && !String(e.message).includes('abort')) {
@@ -2906,15 +2934,31 @@ const App = {
       this.showToast('대본이 없습니다.', 'error'); return
     }
 
+    const hasBgVideo = !!this.state.bgVideoFile
+
+    // bgVideoFile이 있어도 TTS가 없다는 안내 (영상+자막만 합성)
+    if (hasBgVideo) {
+      const ok = await this._showConfirmModal({
+        emoji: '🔇',
+        title: 'TTS 음성 없이 합성합니다',
+        body:  '업로드된 영상 위에 <strong style="color:#fbbf24">자막만 합성</strong>됩니다.<br><br>' +
+               '영상 원본 오디오는 <strong style="color:#10b981">유지</strong>되며,<br>' +
+               'TTS 음성은 포함되지 않습니다.<br><br>' +
+               'TTS를 먼저 생성하면 성우 목소리도 함께 넣을 수 있어요.',
+        cancelText: '취소 — TTS 먼저 생성',
+        okText: '영상 & 자막 합성 (오디오 유지)',
+      })
+      if (!ok) return
+    }
     // bgVideoFile이 없으면 그라데이션 배경 사용 — 커스텀 확인 모달
-    if (!this.state.bgVideoFile) {
+    else {
       const ok = await this._showConfirmModal({
         emoji: '🎬',
-        title: '원본 영상이 없습니다',
-        body:  '원본 영상 없이 합성하면<br>' +
-               '<strong style="color:#fbbf24">무음 + 그라데이션 배경 자막 영상</strong>이 생성됩니다.<br><br>' +
-               '원본 영상을 업로드하면 해당 영상 위에 자막이 합성됩니다.',
-        cancelText: '취소 — 영상 업로드',
+        title: 'TTS 음성과 원본 영상이 없습니다',
+        body:  'TTS 음성도 원본 영상도 없는 상태입니다.<br><br>' +
+               '진행하면 <strong style="color:#fbbf24">무음 + 그라데이션 배경</strong>에 자막만 표시되는 영상이 생성됩니다.<br><br>' +
+               'TTS 생성 또는 영상 업로드를 먼저 하는 것을 권장합니다.',
+        cancelText: '취소',
         okText: '그라데이션 배경으로 합성',
       })
       if (!ok) return
