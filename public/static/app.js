@@ -2238,6 +2238,10 @@ const App = {
     // ── FFmpeg.wasm → mp4 변환 ────────────────────────────────
     try {
       setProgress(65, 'MP4 변환 준비 중...')
+      // FFmpeg가 아직 안 로드됐으면 동적 로드
+      if (!window.FFmpegWASM && window.loadFFmpeg) {
+        try { await window.loadFFmpeg() } catch(e) { /* 로드 실패 시 webm 폴백 */ }
+      }
       const { FFmpeg } = window.FFmpegWASM || {}
       const { fetchFile } = window.FFmpegUtil || {}
 

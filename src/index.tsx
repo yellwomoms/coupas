@@ -80,12 +80,32 @@ function getMainHTML(): string {
   }
   </script>
 
-  <!-- ③ Tailwind: defer (렌더링 차단 없음) -->
-  <script src="https://cdn.tailwindcss.com" defer></script>
+  <!-- ③ Tailwind CDN 제거 — 실제 사용 클래스가 거의 없어 인라인 CSS로 대체 -->
+  <style>
+    .bg-gray-950 { background-color: #030712; }
+    .text-white  { color: #ffffff; }
+    .min-h-screen { min-height: 100vh; }
+    .flex { display: flex; }
+    .items-center { align-items: center; }
+    .gap-2 { gap: 0.5rem; }
+    .font-bold { font-weight: 700; }
+    .text-sm { font-size: 0.875rem; }
+    .text-xs { font-size: 0.75rem; }
+    .mr-1 { margin-right: 0.25rem; }
+    .ml-1 { margin-left: 0.25rem; }
+    .mt-1 { margin-top: 0.25rem; }
+    .mb-1 { margin-bottom: 0.25rem; }
+    .p-2 { padding: 0.5rem; }
+    .px-2 { padding-left: 0.5rem; padding-right: 0.5rem; }
+    .py-1 { padding-top: 0.25rem; padding-bottom: 0.25rem; }
+    .rounded { border-radius: 0.25rem; }
+    .w-full { width: 100%; }
+    .cursor-pointer { cursor: pointer; }
+    .opacity-70 { opacity: 0.7; }
+  </style>
 
-  <!-- ④ FontAwesome: 비동기 로드 -->
-  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free@6.4.0/css/all.min.css"
-        media="print" onload="this.media='all'">
+  <!-- ④ FontAwesome: preload 비동기 로드 (렌더링 차단 없음) -->
+  <link rel="preload" href="https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free@6.4.0/css/all.min.css" as="style" onload="this.rel='stylesheet'">
   <noscript><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free@6.4.0/css/all.min.css"></noscript>
 
   <!-- ⑤ 폰트: font-display:swap (렌더링 차단 없음) -->
@@ -101,11 +121,29 @@ function getMainHTML(): string {
   </style>
   <link href="/static/style.css" rel="stylesheet">
 
-  <!-- ⑥ FFmpeg: defer (영상합성 시에만 사용 - 로딩 차단 안함) -->
-  <script src="https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@0.12.10/dist/umd/ffmpeg.js" defer></script>
-  <script src="https://cdn.jsdelivr.net/npm/@ffmpeg/util@0.12.1/dist/umd/index.js" defer></script>
+  <!-- ⑥ FFmpeg: 영상 합성 버튼 클릭 시에만 동적 로드 (초기 로드 전혀 없음) -->
+  <script>
+  window._ffmpegLoaded = false
+  window.loadFFmpeg = function() {
+    if (window._ffmpegLoaded) return Promise.resolve()
+    window._ffmpegLoaded = true
+    return new Promise((resolve, reject) => {
+      const s1 = document.createElement('script')
+      s1.src = 'https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@0.12.10/dist/umd/ffmpeg.js'
+      s1.onload = () => {
+        const s2 = document.createElement('script')
+        s2.src = 'https://cdn.jsdelivr.net/npm/@ffmpeg/util@0.12.1/dist/umd/index.js'
+        s2.onload = resolve
+        s2.onerror = reject
+        document.head.appendChild(s2)
+      }
+      s1.onerror = reject
+      document.head.appendChild(s1)
+    })
+  }
+  </script>
 </head>
-<body class="bg-gray-950 text-white min-h-screen">
+<body style="background:#030712;color:#fff;min-height:100vh;">
   <!-- 인라인 초기 로딩 화면: JS 파싱 전에도 즉시 표시 -->
   <div id="app">
     <div style="min-height:100vh;background:#0d0820;display:flex;flex-direction:column">
