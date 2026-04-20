@@ -318,23 +318,32 @@ apiRoutes.post('/tts-preview', async (c) => {
       return c.json({ ok: false, error: 'voice_id가 필요합니다.' }, 400)
     }
 
-    // 샘플 텍스트 (미입력 시 기본값) + 첫 글자 클리핑 방지 패딩
-    const rawText = (sample_text || '안녕하세요, 저는 이 목소리로 쇼츠 대본을 읽어드릴 거예요. 잘 부탁드립니다!').trim()
-    // previous_text로 첫 글자 클리핑 방지 처리
-    const text = rawText
+    // 샘플 텍스트 (미입력 시 기본값)
+    const rawText = (sample_text || '안녕하세요! 저는 이 목소리로 쇼츠 대본을 읽어드릴 거예요. 잘 부탁드립니다!').trim()
+    const audioTempo = Math.max(0.5, Math.min(2.0, speed))
 
-    const isSmartMode = emotion_type === 'smart' || emotion_type === 'auto'
-    const audioTempo  = Math.max(0.5, Math.min(2.0, speed))
+    // 감정별 previous_text 맥락 문장 (smart 모드에서만 작동)
+    const emotionContextMap: Record<string, string> = {
+      'smart':    '안녕하세요.',
+      'normal':   '안녕하세요.',
+      'happy':    '정말 기쁜 소식이에요! 너무 설레요!',
+      'toneup':   '와! 이거 진짜 대박이에요! 여러분!',
+      'sad':      '사실 저도 많이 힘들었어요. 공감이 가더라고요.',
+      'whisper':  '잠깐, 이거 정말 중요한 얘기예요.',
+      'tonedown': '오늘은 중요한 내용을 말씀드리려 합니다.',
+      'angry':    '이건 정말 놓치면 안 돼요! 꼭 보세요!'
+    }
+    const prevText = emotionContextMap[emotion_type] || emotionContextMap['smart']
 
+    // Typecast v1 ssfm-v30: 항상 smart 모드 사용 (preset은 previous_text 불가)
     const payload: any = {
       voice_id,
-      text,
+      text: rawText,
       model: 'ssfm-v30',
       language: 'kor',
       prompt: {
-        emotion_type: isSmartMode ? 'smart' : 'preset',
-        ...(!isSmartMode ? { emotion: emotion_type } : {}),
-        previous_text: '안녕하세요.'  // 첫 음절 클리핑 방지
+        emotion_type: 'smart',
+        previous_text: prevText   // 감정 맥락 + 첫 음절 클리핑 방지
       },
       output: {
         volume: 100,
@@ -435,33 +444,41 @@ apiRoutes.post('/jobs/:job_id/generate-tts', async (c) => {
       ? inferEmotionFromScript(job.script_content, ttsVoice?.persona_name)
       : emotion_type   // 'normal' | 'happy' | 'sad' | 'angry' | 'whisper' | 'toneup' | 'tonedown'
 
-    // Typecast prompt.emotion_type: 'preset' (특정감정) | 'smart' (자동) | 'embedding'
-    // 감정 preset 지정 시: emotion_type='preset', emotion=실제감정값
-    const isSmartMode = emotion_type === 'smart' || emotion_type === 'auto'
-    const promptEmotionType = isSmartMode ? 'smart' : 'preset'
+    // ── Typecast v1 ssfm-v30 API 규칙 ─────────────────────────────
+    // emotion_type은 'smart' | 'preset' | 'embedding' 만 지원
+    //   - smart: previous_text, next_text로 맥락 제공 → 항상 이 모드 사용
+    //   - preset: previous_text 불가, emotion 별도 구조 필요 → 사용 안 함
+    //   - embedding: emotion_vector 필요 → 사용 안 함
+    // 감정 반영: previous_text에 감정 맥락 문장을 넣어 smart 모드에서 자연스럽게 적용
 
     // audio_tempo: 0.5~2.0 범위 (Typecast 지원 범위)
     const audioTempo = Math.max(0.5, Math.min(2.0, speed))
 
-    // ── 텍스트 전처리: 첫 글자 클리핑 방지 ────────────────────
-    // Typecast ssfm-v30은 텍스트 맨 앞에서 미세한 묵음이 생길 수 있음
-    // → 앞에 짧은 공백 문장을 덧붙여 실제 대본 첫 글자가 잘리지 않게 처리
     const rawText = job.script_content.trim()
-    // 앞에 마침표(.)를 붙이면 TTS 엔진이 자연스러운 시작 템포를 잡음
-    // 뒤에도 마침표 추가 → 마지막 음절 끊김 방지
-    // previous_text에 자연스러운 한국어 문장을 설정하여
-    // TTS 엔진이 이미 발화 중인 상태로 인식 → 첫 음절 클리핑 방지
-    const paddedText = rawText
 
-    // ── Typecast TTS API 페이로드 ──────────────────────────────
+    // 감정별 previous_text 맥락 문장 매핑
+    // smart 모드에서 이 문장의 감정/톤이 본문에 자연스럽게 이어짐
+    const emotionContextMap: Record<string, string> = {
+      'smart':    '안녕하세요.',
+      'normal':   '안녕하세요.',
+      'happy':    '정말 기쁜 소식이에요! 너무 설레요!',
+      'toneup':   '와! 이거 진짜 대박이에요! 여러분!',
+      'sad':      '사실 저도 많이 힘들었어요. 공감이 가더라고요.',
+      'whisper':  '잠깐, 이거 정말 중요한 얘기예요.',
+      'tonedown': '오늘은 중요한 내용을 말씀드리려 합니다.',
+      'angry':    '이건 정말 놓치면 안 돼요! 꼭 보세요!'
+    }
+    const prevText = emotionContextMap[emotion_type] || emotionContextMap['smart']
+
+    // ── Typecast TTS API 페이로드 (항상 smart 모드) ────────────────
     const ttsPayload: any = {
       voice_id: actualVoiceId,
-      text: paddedText,          // ← 패딩된 텍스트 사용
+      text: rawText,
       model: 'ssfm-v30',
       language: 'kor',
       prompt: {
-        emotion_type: promptEmotionType,
-        ...(promptEmotionType === 'preset' ? { emotion: inferredEmotion } : {})
+        emotion_type: 'smart',     // 항상 smart 사용 (preset/embedding은 구조 달라 오류)
+        previous_text: prevText,   // 감정 맥락 + 첫 글자 클리핑 방지
       },
       output: {
         volume: 100,
@@ -471,16 +488,10 @@ apiRoutes.post('/jobs/:job_id/generate-tts', async (c) => {
       }
     }
 
-    // ── previous_text / next_text 설정 ──────────────────────────────
-    // previous_text: 본문과 다른 짧은 자연스러운 문장 → TTS 엔진이
-    //   '이미 발화 중인 상태'로 인식 → 첫 음절 클리핑 방지에 효과적
-    // ※ 본문 내용을 previous_text에 넣으면 TTS가 중복으로 인식해 건너뜀
-    ttsPayload.prompt.previous_text = '안녕하세요.'
-
+    // next_text: 마지막 문장 → 자연스러운 마무리
     if (rawText.length > 20) {
       const sentences = rawText.split(/[.!?\n]/).filter((s: string) => s.trim())
       if (sentences.length > 1) {
-        // next_text: 마지막 문장 → 자연스러운 마무리 감정 유지
         ttsPayload.prompt.next_text = sentences[sentences.length - 1].trim()
       }
     }
