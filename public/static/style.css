@@ -856,7 +856,11 @@ body {
   gap: 0;
   border-bottom: 1px solid var(--border);
   margin-bottom: 1.5rem;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
 }
+.tab-nav::-webkit-scrollbar { display: none; }
 
 .tab-btn {
   padding: 0.625rem 1rem;
@@ -953,16 +957,143 @@ body {
 
 /* ─── 반응형 ─── */
 @media (max-width: 900px) {
+  /* 레이아웃: 1컬럼 스택 */
   .main-layout {
     grid-template-columns: 1fr;
+    min-height: unset;
   }
+
+  /* 왼쪽 패널: sticky 해제, 높이 auto */
   .left-panel {
     height: auto;
     position: relative;
     top: 0;
+    border-right: none;
+    border-bottom: 1px solid var(--border);
   }
+
+  /* 오른쪽 패널: 패딩 줄이기 */
+  .right-panel {
+    padding: 1rem;
+  }
+
+  /* 섹션 패딩 줄이기 */
+  .section {
+    padding: 1rem;
+  }
+
+  /* 헤더 간소화 */
+  .header {
+    padding: 0 1rem;
+    height: 52px;
+  }
+  .logo-sub {
+    display: none;
+  }
+
+  /* 페르소나 그리드: 모바일에서 5열 유지하되 폰트 작게 */
   .persona-grid {
     grid-template-columns: repeat(5, 1fr);
+    gap: 0.3rem;
+  }
+  .persona-card {
+    padding: 0.4rem 0.2rem;
+    font-size: 0.6rem;
+  }
+  .persona-card .persona-icon {
+    font-size: 1.2rem;
+  }
+
+  /* 탭 버튼 */
+  .tab-btn {
+    font-size: 0.7rem;
+    padding: 0.4rem 0.6rem;
+  }
+
+  /* 버튼 전체 */
+  .btn-generate {
+    font-size: 0.82rem;
+    padding: 0.7rem 1rem;
+  }
+
+  /* 워크스페이스 카드 */
+  .workspace-card {
+    padding: 0.75rem;
+  }
+
+  /* 히스토리 리스트 */
+  .job-item {
+    padding: 0.6rem 0.75rem;
+  }
+
+  /* 폼 인풋 */
+  .input-field,
+  .input-textarea,
+  select {
+    font-size: 0.9rem;
+  }
+
+  /* 자막 설정 그리드 2컬럼 → 2컬럼 유지 (폭 있으므로 OK) */
+}
+
+/* 480px 이하: 소형 스마트폰 */
+@media (max-width: 480px) {
+  .main-layout {
+    font-size: 14px;
+  }
+
+  /* 헤더 */
+  .header {
+    height: 48px;
+  }
+  .logo-title {
+    font-size: 1rem;
+  }
+
+  /* 페르소나 5열 → 좀 더 꽉 채우기 */
+  .persona-grid {
+    grid-template-columns: repeat(5, 1fr);
+    gap: 0.25rem;
+  }
+  .persona-card {
+    padding: 0.35rem 0.1rem;
+    border-radius: 6px;
+  }
+  .persona-card .persona-icon {
+    font-size: 1.1rem;
+  }
+  .persona-card span:last-child {
+    font-size: 0.58rem;
+  }
+
+  /* 탭 */
+  .tab-btn {
+    font-size: 0.65rem;
+    padding: 0.35rem 0.5rem;
+    white-space: nowrap;
+  }
+
+  /* 섹션 */
+  .section {
+    padding: 0.75rem;
+  }
+  .section-title {
+    font-size: 0.65rem;
+  }
+
+  /* 생성 버튼 */
+  .btn-generate {
+    font-size: 0.78rem;
+  }
+
+  /* 오른쪽 패널 */
+  .right-panel {
+    padding: 0.75rem;
+  }
+
+  /* range 슬라이더 터치 영역 */
+  input[type="range"] {
+    height: 28px;
   }
 }
 

@@ -2,6 +2,28 @@
    AI Studio - 페르소나 쇼츠 자동생성 프론트엔드
    ================================================================ */
 
+/* ── fetch 래퍼 (axios 대체) ─────────────────────────────────── */
+const axios = {
+  async _req(method, url, data, retries = 2) {
+    const opts = { method, headers: { 'Content-Type': 'application/json' } }
+    if (data !== undefined) opts.body = JSON.stringify(data)
+    for (let i = 0; i <= retries; i++) {
+      try {
+        const r = await fetch(url, opts)
+        const json = await r.json()
+        return { data: json, status: r.status }
+      } catch (e) {
+        if (i === retries) throw e
+        await new Promise(res => setTimeout(res, 600 * (i + 1)))
+      }
+    }
+  },
+  get: (url) => axios._req('GET', url),
+  post: (url, data) => axios._req('POST', url, data),
+  patch: (url, data) => axios._req('PATCH', url, data),
+  delete: (url) => axios._req('DELETE', url),
+}
+
 const App = {
   // ── 상태 ──────────────────────────────────────────────────────
   state: {
@@ -795,16 +817,13 @@ const App = {
             <!-- 크기 + 위치 -->
             <div style="display:grid;grid-template-columns:1fr 1fr;gap:0.5rem;margin-bottom:0.55rem">
               <div>
-                <label style="font-size:0.65rem;color:var(--text-muted);font-weight:600;display:block;margin-bottom:0.2rem">글자 크기</label>
-                <select id="subtitleFontSizeResynth" style="width:100%;background:var(--bg-card);border:1px solid var(--border);color:var(--text-primary);padding:0.3rem;border-radius:5px;font-size:0.72rem"
-                  onchange="App.state.subtitleFontSize=parseInt(this.value)">
-                  <option value="24" ${state.subtitleFontSize===24?'selected':''}>작게 (24px)</option>
-                  <option value="28" ${state.subtitleFontSize===28?'selected':''}>약간 작게 (28px)</option>
-                  <option value="36" ${(state.subtitleFontSize||36)===36?'selected':''}>보통 (36px)</option>
-                  <option value="42" ${state.subtitleFontSize===42?'selected':''}>크게 (42px)</option>
-                  <option value="48" ${state.subtitleFontSize===48?'selected':''}>매우 크게 (48px)</option>
-                  <option value="56" ${state.subtitleFontSize===56?'selected':''}>초대형 (56px)</option>
-                </select>
+                <label style="font-size:0.65rem;color:var(--text-muted);font-weight:600;display:block;margin-bottom:0.2rem">
+                  글자 크기 <strong style="color:var(--text-primary);font-size:0.72rem" id="fontSizeValResynth">${state.subtitleFontSize||36}px</strong>
+                </label>
+                <input type="range" id="subtitleFontSizeResynth" min="20" max="72" step="1"
+                  value="${state.subtitleFontSize||36}"
+                  style="width:100%;accent-color:#7c3aed;cursor:pointer"
+                  oninput="App.state.subtitleFontSize=parseInt(this.value);const el=document.getElementById('fontSizeValResynth');if(el)el.textContent=this.value+'px'">
               </div>
               <div>
                 <label style="font-size:0.65rem;color:var(--text-muted);font-weight:600;display:block;margin-bottom:0.2rem">자막 위치</label>
@@ -1000,16 +1019,13 @@ const App = {
                 <!-- 글자 크기 + 위치 -->
                 <div style="display:grid;grid-template-columns:1fr 1fr;gap:0.5rem;margin-bottom:0.6rem">
                   <div>
-                    <label style="font-size:0.68rem;color:var(--text-muted);font-weight:600">글자 크기</label>
-                    <select id="subtitleFontSize" style="width:100%;background:var(--bg-card);border:1px solid var(--border);color:var(--text-primary);padding:0.3rem;border-radius:5px;font-size:0.72rem;margin-top:0.2rem"
-                      onchange="App.state.subtitleFontSize=parseInt(this.value)">
-                      <option value="24" ${(state.subtitleFontSize||36)===24?'selected':''}>작게 (24px)</option>
-                      <option value="28" ${(state.subtitleFontSize||36)===28?'selected':''}>약간 작게 (28px)</option>
-                      <option value="36" ${(state.subtitleFontSize||36)===36?'selected':''}>보통 (36px)</option>
-                      <option value="42" ${(state.subtitleFontSize||36)===42?'selected':''}>크게 (42px)</option>
-                      <option value="48" ${(state.subtitleFontSize||36)===48?'selected':''}>매우 크게 (48px)</option>
-                      <option value="56" ${(state.subtitleFontSize||36)===56?'selected':''}>초대형 (56px)</option>
-                    </select>
+                    <label style="font-size:0.68rem;color:var(--text-muted);font-weight:600">
+                      글자 크기 <strong style="color:var(--text-primary);font-size:0.75rem" id="fontSizeValMain">${state.subtitleFontSize||36}px</strong>
+                    </label>
+                    <input type="range" id="subtitleFontSize" min="20" max="72" step="1"
+                      value="${state.subtitleFontSize||36}"
+                      style="width:100%;accent-color:#7c3aed;cursor:pointer;margin-top:0.35rem;display:block"
+                      oninput="App.state.subtitleFontSize=parseInt(this.value);const el=document.getElementById('fontSizeValMain');if(el)el.textContent=this.value+'px'">
                   </div>
                   <div>
                     <label style="font-size:0.68rem;color:var(--text-muted);font-weight:600">자막 위치</label>
@@ -1139,14 +1155,13 @@ const App = {
               </div>
               <div style="display:grid;grid-template-columns:1fr 1fr;gap:0.5rem;margin-bottom:0.5rem">
                 <div>
-                  <label style="font-size:0.65rem;color:var(--text-muted);display:block;margin-bottom:0.2rem">글자 크기</label>
-                  <select id="subtitleFontSizeNoTTS" style="width:100%;background:var(--bg-card);border:1px solid var(--border);color:var(--text-primary);padding:0.3rem;border-radius:5px;font-size:0.72rem"
-                    onchange="App.state.subtitleFontSize=parseInt(this.value)">
-                    <option value="24" ${(state.subtitleFontSize||36)===24?'selected':''}>작게 (24px)</option>
-                    <option value="36" ${(state.subtitleFontSize||36)===36?'selected':''}>보통 (36px)</option>
-                    <option value="42" ${(state.subtitleFontSize||36)===42?'selected':''}>크게 (42px)</option>
-                    <option value="48" ${(state.subtitleFontSize||36)===48?'selected':''}>매우 크게 (48px)</option>
-                  </select>
+                  <label style="font-size:0.65rem;color:var(--text-muted);display:block;margin-bottom:0.2rem">
+                    글자 크기 <strong style="color:var(--text-primary);font-size:0.72rem" id="fontSizeValNoTTS">${state.subtitleFontSize||36}px</strong>
+                  </label>
+                  <input type="range" id="subtitleFontSizeNoTTS" min="20" max="72" step="1"
+                    value="${state.subtitleFontSize||36}"
+                    style="width:100%;accent-color:#7c3aed;cursor:pointer"
+                    oninput="App.state.subtitleFontSize=parseInt(this.value);const el=document.getElementById('fontSizeValNoTTS');if(el)el.textContent=this.value+'px'">
                 </div>
                 <div>
                   <label style="font-size:0.65rem;color:var(--text-muted);display:block;margin-bottom:0.2rem">자막 위치</label>
@@ -2149,9 +2164,8 @@ const App = {
     const duration = audio.duration || 20
 
     // ── 자막 세그먼트 생성 ────────────────────────────────────────
-    // TTS 생성 시 앞에 '음. ' 패딩이 붙어 실제 대본 발화가 약 0.6초 후 시작
-    // → subtitleOffset으로 자막 타이밍을 TTS 음성에 싱크 맞춤
-    const TTS_PADDING_OFFSET = 0.6  // '음. ' 발화 시간 (초)
+    // TTS 앞 무음 패딩 오프셋: 실제 Typecast TTS는 약 0.3~0.5초 앞에 무음
+    const TTS_PADDING_OFFSET = 0.35  // 무음 패딩 (초)
     const segments = this._buildSubtitleSegments(script, duration, ctx, fontSize, W, TTS_PADDING_OFFSET)
 
     // ── MediaRecorder (webm 녹화) ─────────────────────────────
@@ -2416,17 +2430,42 @@ const App = {
     }
     if (allLineGroups.length === 0) allLineGroups = [{ lines: [raw.substring(0, MAX_LINE_CHARS)], charCount: Math.min(raw.length, MAX_LINE_CHARS) }]
 
-    // 4) 타임코드 할당 (글자수 비례 + 최소 노출 시간 0.8초 보장)
-    // subtitleOffset: TTS 패딩('음. ') 발화 시간만큼 자막 시작을 뒤로 밀어 싱크 맞춤
-    const usableDuration = Math.max(duration - subtitleOffset, duration * 0.9)
-    const totalChars = allLineGroups.reduce((s, g) => s + g.charCount, 0) || 1
-    const MIN_SEG_DUR = 0.8   // 최소 0.8초 노출
-    const segments = []
-    let elapsed = subtitleOffset  // 패딩 시간만큼 오프셋 적용
+    // 4) 타임코드 할당 — 실제 TTS 발화속도 기반 싱크
+    // 한국어 TTS 평균: 약 4.5글자/초 (speed 1.0 기준)
+    // 문장부호(마침표·느낌표·물음표) 뒤 = 0.25초 포즈 추가
+    // 줄바꿈(\n) 위치 = 0.15초 포즈 추가
+    const ttsSpeed   = this.state.form?.tts_speed || 1.0
+    const CPS_BASE   = 4.5                        // 글자/초 (speed 1.0)
+    const CPS        = CPS_BASE * ttsSpeed         // 재생속도 반영
+    const MIN_SEG_DUR = 0.7                        // 최소 노출시간 (초)
+    const MAX_SEG_DUR = 3.5                        // 최대 노출시간 (초)
+    const PAUSE_PUNCT = 0.22                       // 문장부호 후 포즈
+    const PAUSE_NL    = 0.12                       // 줄바꿈 후 포즈
 
-    for (const group of allLineGroups) {
-      const rawDur = (group.charCount / totalChars) * usableDuration
-      const segDur = Math.max(MIN_SEG_DUR, rawDur)
+    // 각 세그먼트의 예상 발화시간 계산
+    const rawDurs = allLineGroups.map(g => {
+      const chars = g.charCount || 1
+      const base  = chars / CPS
+      // 텍스트 끝이 문장부호면 포즈 추가
+      const txt   = g.lines.join('')
+      const hasPunct = /[.!?~。！？,，]$/.test(txt.trim())
+      const hasNL    = g._isNewline || false
+      return Math.min(MAX_SEG_DUR, Math.max(MIN_SEG_DUR, base))
+           + (hasPunct ? PAUSE_PUNCT : 0)
+           + (hasNL    ? PAUSE_NL    : 0)
+    })
+
+    // 전체 예상시간이 실제 duration과 다르면 비율 보정
+    const rawTotal  = rawDurs.reduce((s, d) => s + d, 0) || 1
+    const usable    = Math.max(duration - subtitleOffset, duration * 0.85)
+    const scale     = usable / rawTotal
+
+    const segments = []
+    let elapsed = subtitleOffset
+
+    for (let i = 0; i < allLineGroups.length; i++) {
+      const group  = allLineGroups[i]
+      const segDur = rawDurs[i] * scale
       segments.push({
         lines: group.lines,
         start: elapsed,
@@ -2436,16 +2475,10 @@ const App = {
       elapsed += segDur
     }
 
-    // 5) 전체 duration 초과 시 비율 조정
-    if (elapsed > duration) {
-      const scale = duration / elapsed
-      let t = 0
-      for (const seg of segments) {
-        const dur = (seg.end - seg.start) * scale
-        seg.start = t
-        seg.end = t + dur
-        t += dur
-      }
+    // 마지막 세그먼트가 duration을 초과하지 않도록 클램프
+    if (segments.length > 0) {
+      const last = segments[segments.length - 1]
+      if (last.end > duration) last.end = duration
     }
 
     return segments
