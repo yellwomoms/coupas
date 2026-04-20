@@ -31,6 +31,9 @@ const App = {
     isGenerating: false,
     isGeneratingTTS: false,
     isRendering: false,           // 영상 렌더링 중
+    // ── 중단 컨트롤러 ──
+    _scriptAbortCtrl: null,       // 대본 생성 중단용
+    _ttsAbortCtrl: null,          // TTS 생성 중단용
     activeTab: 'workspace',       // workspace | history | preview | cost
     editingScript: false,
     currentAudio: null,
@@ -456,9 +459,9 @@ const App = {
 
         <!-- 생성 버튼 -->
         <section class="section" style="border-bottom:none">
-          <button class="btn-generate" id="btnGenerate" ${isGenerating ? 'disabled' : ''}>
+          <button class="btn-generate" id="btnGenerate" onclick="${isGenerating ? 'App.cancelScript()' : 'App.generateScript()'}" style="${isGenerating ? 'background:linear-gradient(135deg,#ef4444,#dc2626)' : ''}">
             ${isGenerating
-              ? `<span class="spinner"></span> 대본 생성 중...`
+              ? `<span class="spinner"></span> 생성 중... <span style="font-size:0.72rem;opacity:0.85;margin-left:4px">(클릭하여 중단)</span>`
               : `<i class="fas fa-magic"></i> AI 대본 생성하기`}
           </button>
           ${!form.persona_id
@@ -615,8 +618,8 @@ const App = {
                 : '<i class="fas fa-play-circle"></i> TTS 생성'}
             </button>
           ` : state.isGeneratingTTS ? `
-            <button class="btn-accent" disabled style="font-size:0.78rem;padding:0.4rem 0.9rem;opacity:0.7">
-              <span class="spinner" style="width:12px;height:12px;border-width:2px"></span> 생성 중...
+            <button class="btn-accent" onclick="App.cancelTTS()" style="font-size:0.78rem;padding:0.4rem 0.9rem;background:linear-gradient(135deg,#ef4444,#dc2626)">
+              <span class="spinner" style="width:12px;height:12px;border-width:2px"></span> 생성 중... <span style="font-size:0.68rem;opacity:0.85">(클릭 중단)</span>
             </button>
           ` : ''}
         </div>
@@ -876,9 +879,11 @@ const App = {
             </div>
 
             <!-- 재합성 버튼 -->
-            <button onclick="App.startVideoSynthesis()"
-              style="width:100%;padding:0.65rem;background:linear-gradient(135deg,#7c3aed,#a855f7);border:none;color:white;border-radius:8px;cursor:pointer;font-size:0.82rem;font-weight:700;display:flex;align-items:center;justify-content:center;gap:0.5rem">
-              <i class="fas fa-redo"></i> ${state.bgVideoFile ? '업로드된 영상 + 자막 재합성' : '자막 설정 적용 후 재합성'}
+            <button onclick="${isRendering ? 'App.cancelRendering()' : 'App.startVideoSynthesis()'}"
+              style="width:100%;padding:0.65rem;background:linear-gradient(135deg,${isRendering ? '#ef4444,#dc2626' : '#7c3aed,#a855f7'});border:none;color:white;border-radius:8px;cursor:pointer;font-size:0.82rem;font-weight:700;display:flex;align-items:center;justify-content:center;gap:0.5rem">
+              ${isRendering
+                ? `<span class="spinner" style="width:14px;height:14px;border-width:2px"></span> 합성 중... (클릭하여 중단)`
+                : `<i class="fas fa-redo"></i> ${state.bgVideoFile ? '업로드된 영상 + 자막 재합성' : '자막 설정 적용 후 재합성'}`}
             </button>
           </div>
         ` : hasTTS ? `
@@ -898,8 +903,8 @@ const App = {
               </div>
               <div style="display:flex;align-items:center;justify-content:space-between">
                 <div style="font-size:0.68rem;color:var(--text-muted)">브라우저에서 직접 렌더링 중 — 탭을 닫지 마세요</div>
-                <button onclick="App.cancelRendering()" style="display:inline-flex;align-items:center;gap:0.3rem;background:rgba(239,68,68,0.15);color:#ef4444;border:1px solid rgba(239,68,68,0.3);padding:0.3rem 0.7rem;border-radius:6px;cursor:pointer;font-size:0.72rem;font-weight:600">
-                  <i class="fas fa-stop"></i> 취소
+                <button onclick="App.cancelRendering()" style="display:inline-flex;align-items:center;gap:0.3rem;background:rgba(239,68,68,0.15);color:#ef4444;border:1px solid rgba(239,68,68,0.3);padding:0.3rem 0.9rem;border-radius:6px;cursor:pointer;font-size:0.72rem;font-weight:600">
+                  <i class="fas fa-stop-circle"></i> 합성 중단
                 </button>
               </div>
             </div>
@@ -1082,8 +1087,10 @@ const App = {
                 </div>
               </div>
 
-              <button onclick="App.startVideoSynthesis()" class="btn-generate" style="font-size:0.85rem;padding:0.7rem 1.5rem">
-                <i class="fas fa-film"></i> 자막+TTS 영상 합성 시작
+              <button onclick="${isRendering ? 'App.cancelRendering()' : 'App.startVideoSynthesis()'}" class="btn-generate" style="font-size:0.85rem;padding:0.7rem 1.5rem;background:linear-gradient(135deg,${isRendering ? '#ef4444,#dc2626' : 'var(--primary),var(--primary-dark,#6d28d9)'})">
+                ${isRendering
+                  ? `<span class="spinner" style="width:15px;height:15px;border-width:2px"></span>&nbsp; 합성 중... <span style="font-size:0.72rem;opacity:0.85;margin-left:4px">(클릭하여 중단)</span>`
+                  : `<i class="fas fa-film"></i> 자막+TTS 영상 합성 시작`}
               </button>
               <div style="font-size:0.68rem;color:var(--text-muted);margin-top:0.4rem">
                 브라우저에서 직접 렌더링 · 약 20~40초 소요
@@ -1158,8 +1165,10 @@ const App = {
               TTS 없이 합성 시 영상에 오디오가 없습니다. TTS를 먼저 생성하는 것을 권장합니다.
             </div>
 
-            <button onclick="App.startVideoSynthesisNoTTS()" class="btn-generate" style="font-size:0.82rem;padding:0.65rem 1.2rem;background:linear-gradient(135deg,#fb923c,#f97316)">
-              <i class="fas fa-film"></i> 자막만 합성 (TTS 없이)
+            <button onclick="${isRendering ? 'App.cancelRendering()' : 'App.startVideoSynthesisNoTTS()'}" class="btn-generate" style="font-size:0.82rem;padding:0.65rem 1.2rem;background:linear-gradient(135deg,${isRendering ? '#ef4444,#dc2626' : '#fb923c,#f97316'})">
+              ${isRendering
+                ? `<span class="spinner" style="width:14px;height:14px;border-width:2px"></span> 합성 중... <span style="font-size:0.72rem;opacity:0.85;margin-left:4px">(클릭하여 중단)</span>`
+                : `<i class="fas fa-film"></i> 자막만 합성 (TTS 없이)`}
             </button>
           </div>
         `}
@@ -1519,6 +1528,17 @@ const App = {
     })
   },
 
+  // ── 대본 생성 중단 ────────────────────────────────────────────
+  cancelScript() {
+    if (this.state._scriptAbortCtrl) {
+      this.state._scriptAbortCtrl.abort()
+      this.state._scriptAbortCtrl = null
+    }
+    this.state.isGenerating = false
+    this.showToast('대본 생성이 중단되었습니다.', 'info')
+    this.rerender()
+  },
+
   // ── 대본 생성 ─────────────────────────────────────────────────
   async generateScript() {
     const { form } = this.state
@@ -1529,6 +1549,9 @@ const App = {
       this.showToast('페르소나를 선택해주세요.', 'error'); return
     }
 
+    // AbortController 생성
+    const abortCtrl = new AbortController()
+    this.state._scriptAbortCtrl = abortCtrl
     this.state.isGenerating = true
     this.rerender()
 
@@ -1592,8 +1615,12 @@ const App = {
         this.showToast(res.data.error || '생성 실패', 'error')
       }
     } catch (e) {
-      this.showToast('서버 오류: ' + (e.response?.data?.error || e.message), 'error')
+      // 중단 요청이면 토스트 안 띄움 (cancelScript가 이미 처리)
+      if (e.name !== 'AbortError' && !String(e.message).includes('abort')) {
+        this.showToast('서버 오류: ' + (e.response?.data?.error || e.message), 'error')
+      }
     } finally {
+      this.state._scriptAbortCtrl = null
       this.state.isGenerating = false
       this.rerender()
     }
@@ -1649,6 +1676,17 @@ const App = {
     }
   },
 
+  // ── TTS 생성 중단 ────────────────────────────────────────────
+  cancelTTS() {
+    if (this.state._ttsAbortCtrl) {
+      this.state._ttsAbortCtrl.abort()
+      this.state._ttsAbortCtrl = null
+    }
+    this.state.isGeneratingTTS = false
+    this.showToast('TTS 생성이 중단되었습니다.', 'info')
+    this.rerender()
+  },
+
   // ── TTS 생성 (Typecast) ───────────────────────────────────────
   async generateTTS() {
     if (!this.state.currentJob?.job_id) {
@@ -1658,6 +1696,8 @@ const App = {
       this.showToast('Typecast API 키가 필요합니다. Deploy 탭에서 설정하세요.', 'error'); return
     }
 
+    const abortCtrl = new AbortController()
+    this.state._ttsAbortCtrl = abortCtrl
     this.state.isGeneratingTTS = true
     this.rerender()
 
@@ -1684,8 +1724,11 @@ const App = {
         this.showToast((res.data.error || 'TTS 생성 실패') + hint, 'error')
       }
     } catch (e) {
-      this.showToast('TTS 오류: ' + (e.response?.data?.error || e.message), 'error')
+      if (e.name !== 'AbortError' && !String(e.message).includes('abort')) {
+        this.showToast('TTS 오류: ' + (e.response?.data?.error || e.message), 'error')
+      }
     } finally {
+      this.state._ttsAbortCtrl = null
       this.state.isGeneratingTTS = false
       this.rerender()
     }
