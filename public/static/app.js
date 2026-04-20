@@ -1,28 +1,7 @@
 /* ================================================================
    AI Studio - 페르소나 쇼츠 자동생성 프론트엔드
    ================================================================ */
-
-/* ── fetch 래퍼 (axios 대체) ─────────────────────────────────── */
-const axios = {
-  async _req(method, url, data, retries = 2) {
-    const opts = { method, headers: { 'Content-Type': 'application/json' } }
-    if (data !== undefined) opts.body = JSON.stringify(data)
-    for (let i = 0; i <= retries; i++) {
-      try {
-        const r = await fetch(url, opts)
-        const json = await r.json()
-        return { data: json, status: r.status }
-      } catch (e) {
-        if (i === retries) throw e
-        await new Promise(res => setTimeout(res, 600 * (i + 1)))
-      }
-    }
-  },
-  get: (url) => axios._req('GET', url),
-  post: (url, data) => axios._req('POST', url, data),
-  patch: (url, data) => axios._req('PATCH', url, data),
-  delete: (url) => axios._req('DELETE', url),
-}
+/* axios 래퍼는 index.tsx <script> 블록에 선언되어 있음 — 여기서 중복 선언 금지 */
 
 const App = {
   // ── 상태 ──────────────────────────────────────────────────────
