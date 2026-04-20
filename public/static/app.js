@@ -139,9 +139,16 @@ const App = {
 
   async loadInitialData() {
     try {
-      // 🚀 /api/init: jobs 제외한 핵심 설정만 빠르게 로드
-      const res = await axios.get('/api/init')
-      const d = res.data.data
+      // SSR 인라인 데이터가 있으면 API 호출 없이 즉시 사용 (로딩 0ms)
+      let d
+      if (window.__INIT_DATA__) {
+        d = window.__INIT_DATA__
+        window.__INIT_DATA__ = null // 메모리 해제
+      } else {
+        // 폴백: API 호출
+        const res = await axios.get('/api/init')
+        d = res.data.data
+      }
 
       this.state.personas          = d.personas          || []
       this.state.subtitlePresets   = d.subtitlePresets   || []
@@ -763,10 +770,10 @@ const App = {
           <div style="background:rgba(16,185,129,0.05);border:1px solid rgba(16,185,129,0.2);border-radius:10px;padding:1rem;text-align:center;margin-bottom:0.75rem">
             <div style="font-size:2rem;margin-bottom:0.5rem">🎬</div>
             <div style="font-size:0.85rem;font-weight:700;color:#10b981;margin-bottom:0.3rem">자막 합성 영상 완성!</div>
-            <div style="font-size:0.72rem;color:var(--text-muted);margin-bottom:0.75rem">TTS 음성 + 자막이 합성된 MP4 영상입니다</div>
-            <a href="${currentJob.output_video_url}" download="aistudio_output.mp4"
+            <div style="font-size:0.72rem;color:var(--text-muted);margin-bottom:0.75rem">TTS 음성 + 자막이 합성된 영상입니다</div>
+            <a href="${currentJob.output_video_url}" download="${currentJob._videoIsMP4 === false ? 'aistudio_output.webm' : 'aistudio_output.mp4'}"
               style="display:inline-flex;align-items:center;gap:0.4rem;background:#10b981;color:white;padding:0.55rem 1.2rem;border-radius:8px;text-decoration:none;font-size:0.82rem;font-weight:700">
-              <i class="fas fa-download"></i> MP4 다운로드
+              <i class="fas fa-download"></i> ${currentJob._videoIsMP4 === false ? 'WebM 다운로드' : 'MP4 다운로드 (인스타·틱톡 호환)'}
             </a>
           </div>
 
@@ -878,7 +885,7 @@ const App = {
 
             <!-- 재합성 버튼 -->
             <button id="btnResynth"
-              style="width:100%;padding:0.65rem;background:linear-gradient(135deg,${isRendering ? '#ef4444,#dc2626' : '#7c3aed,#a855f7'});border:none;color:white;border-radius:8px;cursor:pointer;font-size:0.82rem;font-weight:700;display:flex;align-items:center;justify-content:center;gap:0.5rem">
+              style="width:100%;padding:0.65rem;background:linear-gradient(135deg,${isRendering ? '#ef4444,#dc2626' : '#fb923c,#f97316'});border:none;color:white;border-radius:8px;cursor:pointer;font-size:0.82rem;font-weight:700;display:flex;align-items:center;justify-content:center;gap:0.5rem">
               ${isRendering
                 ? `<span class="spinner" style="width:14px;height:14px;border-width:2px"></span> 합성 중... (클릭하여 중단)`
                 : `<i class="fas fa-redo"></i> ${state.bgVideoFile ? '업로드된 영상 + 자막 재합성' : '자막 설정 적용 후 재합성'}`}
@@ -1082,7 +1089,7 @@ const App = {
                 </div>
               </div>
 
-              <button id="btnSynthStart" class="btn-generate" style="font-size:0.85rem;padding:0.7rem 1.5rem;background:linear-gradient(135deg,${isRendering ? '#ef4444,#dc2626' : 'var(--primary),var(--primary-dark,#6d28d9)'})">
+              <button id="btnSynthStart" class="btn-generate" style="font-size:0.85rem;padding:0.7rem 1.5rem;background:linear-gradient(135deg,${isRendering ? '#ef4444,#dc2626' : '#fb923c,#f97316'})">
                 ${isRendering
                   ? `<span class="spinner" style="width:15px;height:15px;border-width:2px"></span>&nbsp; 합성 중... <span style="font-size:0.72rem;opacity:0.85;margin-left:4px">(클릭하여 중단)</span>`
                   : `<i class="fas fa-film"></i> 자막+TTS 영상 합성 시작`}
@@ -2100,13 +2107,16 @@ const App = {
     } catch(e) {}
 
     try {
-      const videoUrl = await this._renderSubtitleVideo()
+      const videoResult = await this._renderSubtitleVideo()
       if (this._renderCancelFlag) {
         this.showToast('렌더링이 취소되었습니다.', 'info')
         return
       }
+      // _renderSubtitleVideo는 { url, isH264 } 또는 문자열(URL) 반환
+      const videoUrl = typeof videoResult === 'object' ? videoResult.url : videoResult
+      const isH264   = typeof videoResult === 'object' ? videoResult.isH264 : true
       this.state.currentJob.output_video_url = videoUrl
-      this.state.currentJob._videoIsMP4 = !videoUrl.includes('.webm')
+      this.state.currentJob._videoIsMP4 = isH264
       this.state.currentJob.stage = 'complete'
       this.state.currentJob.status = 'complete'
 
@@ -2289,7 +2299,7 @@ const App = {
 
     const webmBlob = new Blob(chunks, { type: mimeType })
 
-    // ── FFmpeg.wasm → mp4 변환 ────────────────────────────────
+    // ── FFmpeg.wasm → H.264 MP4 변환 ────────────────────────────
     try {
       setProgress(65, 'MP4 변환 준비 중...')
       // FFmpeg가 아직 안 로드됐으면 동적 로드
@@ -2300,10 +2310,10 @@ const App = {
       const { fetchFile } = window.FFmpegUtil || {}
 
       if (!FFmpeg || !fetchFile) {
-        setProgress(100, '완료! (webm 컨테이너)')
-        this.showToast('✅ 영상 완성! (다운 후 .mp4 확장자로 저장됩니다)', 'info')
-        const mp4CompatBlob = new Blob([webmBlob], { type: 'video/mp4' })
-        return URL.createObjectURL(mp4CompatBlob)
+        // FFmpeg 없음 → webm 원본을 그대로 반환 (확장자 .webm 유지)
+        setProgress(100, '완료! (webm 형식)')
+        this.showToast('⚠️ MP4 변환 불가 — .webm 파일로 저장됩니다.\n인스타·틱톡 업로드 시 PC에서 변환 후 사용하세요.', 'info', 6000)
+        return { url: URL.createObjectURL(webmBlob), isH264: false }
       }
 
       const ffmpeg = new FFmpeg()
@@ -2320,8 +2330,21 @@ const App = {
       setProgress(75, '영상 데이터 전달 중...')
       await ffmpeg.writeFile('input.webm', await fetchFile(webmBlob))
 
-      setProgress(80, 'MP4 인코딩 중...')
-      await ffmpeg.exec(['-i','input.webm','-c:v','copy','-c:a','aac','-movflags','+faststart','output.mp4'])
+      setProgress(80, 'H.264 MP4 인코딩 중... (인스타·틱톡 호환)')
+      // H.264 + AAC 리인코딩 → 모바일 앱 완전 호환
+      await ffmpeg.exec([
+        '-i', 'input.webm',
+        '-c:v', 'libx264',      // H.264 비디오 코덱 (모든 플랫폼 호환)
+        '-preset', 'ultrafast', // 인코딩 속도 우선 (브라우저 환경)
+        '-crf', '23',           // 화질 (18=최고, 28=최저, 23=기본)
+        '-profile:v', 'baseline', // iOS 호환 프로파일
+        '-level', '3.1',        // 광범위 디바이스 호환
+        '-pix_fmt', 'yuv420p',  // 색상 포맷 (iOS/안드로이드 필수)
+        '-c:a', 'aac',          // AAC 오디오 (모바일 표준)
+        '-b:a', '128k',
+        '-movflags', '+faststart', // 웹 스트리밍 최적화
+        'output.mp4'
+      ])
 
       setProgress(96, '파일 생성 중...')
       const mp4Data = await ffmpeg.readFile('output.mp4')
@@ -2329,17 +2352,15 @@ const App = {
       await ffmpeg.deleteFile('input.webm')
       await ffmpeg.deleteFile('output.mp4')
 
-      setProgress(100, '✅ MP4 완성!')
-      return URL.createObjectURL(mp4Blob)
+      setProgress(100, '✅ H.264 MP4 완성! (인스타·틱톡 호환)')
+      return { url: URL.createObjectURL(mp4Blob), isH264: true }
 
     } catch (err) {
       console.error('FFmpeg 변환 실패:', err)
-      // webm을 mp4 확장자 blob으로 감싸서 반환 (브라우저에서 재생 가능)
-      setProgress(100, '완료! (webm 컨테이너)')
-      this.showToast('✅ 영상 완성! (webm 형식 — 다운 후 .mp4로 저장됩니다)', 'info')
-      // Blob을 mp4 타입으로 재생성해서 반환
-      const mp4CompatBlob = new Blob([webmBlob], { type: 'video/mp4' })
-      return URL.createObjectURL(mp4CompatBlob)
+      // 변환 실패 → webm 원본 반환 + 안내
+      setProgress(100, '완료! (webm 형식 — 변환 실패)')
+      this.showToast('⚠️ H.264 변환 실패 — .webm으로 저장됩니다.\n인스타·틱톡 업로드는 PC에서 MP4 변환 후 사용하세요.', 'info', 6000)
+      return { url: URL.createObjectURL(webmBlob), isH264: false }
     }
   },
 
@@ -2643,15 +2664,15 @@ const App = {
   },
 
   // ── 유틸리티 ─────────────────────────────────────────────────
-  showToast(msg, type = 'info') {
+  showToast(msg, type = 'info', duration = 3500) {
     const container = document.getElementById('toastContainer')
     if (!container) return
     const toast = document.createElement('div')
     toast.className = `toast ${type}`
     const icons = { success: '✅', error: '❌', info: 'ℹ️' }
-    toast.innerHTML = `<span>${icons[type] || 'ℹ️'}</span><span>${msg}</span>`
+    toast.innerHTML = `<span>${icons[type] || 'ℹ️'}</span><span style="white-space:pre-line">${msg}</span>`
     container.appendChild(toast)
-    setTimeout(() => toast.remove(), 3500)
+    setTimeout(() => toast.remove(), duration)
   },
 
   escHtml(str) {
@@ -3005,10 +3026,46 @@ const App = {
     cancelAnimationFrame(animFrame)
     recorder.stop()
     await new Promise(res => { recorder.onstop = () => res(null) })
-    setProgress(95, 'webm 완성...')
+    setProgress(70, 'webm 완성, MP4 변환 중...')
 
     const webmBlob = new Blob(chunks, { type: mimeType })
-    setProgress(100, '✅ 완성!')
+
+    // NoTTS도 H.264 MP4로 변환 (모바일 호환)
+    try {
+      if (!window.FFmpegWASM && window.loadFFmpeg) {
+        try { await window.loadFFmpeg() } catch(e) {}
+      }
+      const { FFmpeg } = window.FFmpegWASM || {}
+      const { fetchFile } = window.FFmpegUtil || {}
+      if (FFmpeg && fetchFile) {
+        const ffmpeg = new FFmpeg()
+        ffmpeg.on('progress', ({ progress }) => {
+          setProgress(70 + progress * 28, `H.264 변환 중... ${Math.round(progress*100)}%`)
+        })
+        await ffmpeg.load({
+          coreURL: 'https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.6/dist/umd/ffmpeg-core.js',
+          wasmURL: 'https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.6/dist/umd/ffmpeg-core.wasm',
+        })
+        await ffmpeg.writeFile('input.webm', await fetchFile(webmBlob))
+        await ffmpeg.exec([
+          '-i','input.webm',
+          '-c:v','libx264','-preset','ultrafast','-crf','23',
+          '-profile:v','baseline','-level','3.1',
+          '-pix_fmt','yuv420p',
+          '-an',              // NoTTS: 오디오 없음
+          '-movflags','+faststart',
+          'output.mp4'
+        ])
+        const mp4Data = await ffmpeg.readFile('output.mp4')
+        const mp4Blob = new Blob([mp4Data.buffer], { type: 'video/mp4' })
+        await ffmpeg.deleteFile('input.webm')
+        await ffmpeg.deleteFile('output.mp4')
+        setProgress(100, '✅ H.264 MP4 완성!')
+        return URL.createObjectURL(mp4Blob)
+      }
+    } catch(e) { console.warn('NoTTS ffmpeg 변환 실패:', e) }
+
+    setProgress(100, '✅ 완성! (webm 형식)')
     return URL.createObjectURL(webmBlob)
   },
 

@@ -18,17 +18,43 @@ app.use('/static/*', serveStatic({ root: './public' }))
 // API 라우트
 app.route('/api', apiRoutes)
 
-// 메인 대시보드 (SPA)
-app.get('/', (c) => {
-  return c.html(getMainHTML())
+// 메인 대시보드 (SPA) — init 데이터 인라인 주입으로 첫 로딩 제거
+app.get('/', async (c) => {
+  // 초기 데이터를 SSR로 미리 가져와 HTML에 인라인 삽입
+  let initData = null
+  try {
+    const [personasR, presetsR, voicesR, prodPresetsR] = await c.env.DB.batch([
+      c.env.DB.prepare('SELECT * FROM personas ORDER BY id'),
+      c.env.DB.prepare('SELECT * FROM subtitle_presets ORDER BY id'),
+      c.env.DB.prepare('SELECT * FROM tts_voices ORDER BY id'),
+      c.env.DB.prepare('SELECT * FROM production_presets ORDER BY is_default DESC, id ASC'),
+    ])
+    initData = {
+      personas:          personasR.results    || [],
+      subtitlePresets:   presetsR.results     || [],
+      ttsVoices:         voicesR.results      || [],
+      productionPresets: prodPresetsR.results || [],
+      settings: {
+        has_openai:   !!c.env.OPENAI_API_KEY,
+        has_typecast: !!c.env.TYPECAST_API_KEY,
+        has_n8n:      !!c.env.N8N_WEBHOOK_URL,
+        tts_provider: 'typecast'
+      }
+    }
+  } catch(e) { /* DB 실패 시 클라이언트가 /api/init 호출로 폴백 */ }
+
+  return c.html(getMainHTML(initData))
 })
 
 // 404 fallback -> SPA
 app.notFound((c) => {
-  return c.html(getMainHTML())
+  return c.html(getMainHTML(null))
 })
 
-function getMainHTML(): string {
+function getMainHTML(initData: any): string {
+  const inlineScript = initData
+    ? `<script>window.__INIT_DATA__=${JSON.stringify(initData).replace(/<\/script>/gi,'<\\/script>')}</script>`
+    : ''
   return `<!DOCTYPE html>
 <html lang="ko">
 <head>
@@ -119,6 +145,7 @@ function getMainHTML(): string {
     .font-nanum-pen   { font-family:'Nanum Pen Script',cursive; }
     .font-nanum-brush { font-family:'Nanum Brush Script',cursive; }
   </style>
+  ${inlineScript}
   <link href="/static/style.css" rel="stylesheet">
 
   <!-- ⑥ FFmpeg: 영상 합성 버튼 클릭 시에만 동적 로드 (초기 로드 전혀 없음) -->
@@ -164,7 +191,7 @@ function getMainHTML(): string {
     </div>
     <style>@keyframes _spin{to{transform:rotate(360deg)}}</style>
   </div>
-  <script src="/static/app.js?v=20260420d"></script>
+  <script src="/static/app.js?v=20260421" defer></script>
 </body>
 </html>`
 }
