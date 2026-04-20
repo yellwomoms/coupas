@@ -6,7 +6,7 @@ import { apiRoutes } from './routes/api'
 type Bindings = {
   DB: D1Database
   OPENAI_API_KEY: string
-  ELEVENLABS_API_KEY: string
+  TYPECAST_API_KEY: string
   N8N_WEBHOOK_URL: string
 }
 

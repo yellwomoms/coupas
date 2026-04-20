@@ -63,10 +63,17 @@ INSERT OR IGNORE INTO subtitle_presets (id, name, font_family, font_size, font_c
 (4, '여기어때 잘난체', 'GmarketSansBold', 40, '#FFD700', 'rgba(0,0,0,0.0)', 'middle_center', '#FFFFFF', '#000000', 4, 0),
 (5, '나눔 명조 감성', 'NanumMyeongjo', 34, '#FFFFFF', 'rgba(0,0,0,0.6)', 'bottom_bar', '#FFB7C5', '#333333', 1, 0);
 
--- TTS 보이스 프리셋 시드 데이터
+-- TTS 보이스 프리셋 시드 데이터 (Typecast 한국어 성우)
+-- voice_id: Typecast GET /v2/voices 로 실제 ID 확인 후 교체 필요
+-- 아래 ID는 Typecast 공식 문서 예시 기반 플레이스홀더
 INSERT OR IGNORE INTO tts_voices (id, name, voice_id, provider, gender, style, description, persona_match, is_default) VALUES
-(1, '따뜻한 엄마 목소리', 'pNInz6obpgDQGcFmaJgB', 'elevenlabs', 'female', 'warm', '부드럽고 따뜻한 30대 여성 목소리', 'mom,dad', 1),
-(2, '트렌디 누나 목소리', 'EXAVITQu4vr4xnSDxMaL', 'elevenlabs', 'female', 'trendy', '활발하고 세련된 20대 여성 목소리', 'sister', 0),
-(3, '친근한 자취생 목소리', 'VR6AewLTigWG4xSOukaG', 'elevenlabs', 'female', 'casual', '편안하고 캐주얼한 20대 목소리', 'solo', 0),
-(4, '신뢰감 있는 전문가', 'onwK4e9ZLuTAKqWW03F9', 'elevenlabs', 'female', 'professional', '차분하고 신뢰감 있는 전문가 목소리', 'expert', 0),
-(5, '유쾌한 아빠 목소리', 'D38z5RcWu1voky8WS1ja', 'elevenlabs', 'male', 'cheerful', '유쾌하고 친근한 30대 남성 목소리', 'dad', 0);
+(1, '지은 — 따뜻한 30대 엄마', 'tc_TYPECAST_JIEUN', 'typecast', 'female', 'warm',
+ '부드럽고 공감력 있는 30대 여성. 육아·생활 밀착 쇼핑 쇼츠에 최적', 'mom,dad', 1),
+(2, '수아 — 트렌디 20대 직장인', 'tc_TYPECAST_SOOA', 'typecast', 'female', 'trendy',
+ '활발하고 세련된 MZ 여성 목소리. 뷰티·패션·자기관리 쇼츠 최적', 'sister', 0),
+(3, '민준 — 유쾌한 자취생', 'tc_TYPECAST_MINJUN', 'typecast', 'male', 'casual',
+ '편안하고 친근한 20대 남성. 가성비·생활용품 쇼츠에 잘 맞음', 'solo', 0),
+(4, '하은 — 신뢰감 있는 전문가', 'tc_TYPECAST_HAEUN', 'typecast', 'female', 'professional',
+ '차분하고 신뢰감 있는 여성 전문가 목소리. 건강·뷰티 성분 설명에 최적', 'expert', 0),
+(5, '재원 — 유쾌한 육아 아빠', 'tc_TYPECAST_JAEWON', 'typecast', 'male', 'cheerful',
+ '유쾌하고 솔직한 30대 아빠 목소리. 육아용품·가족 쇼츠에 최적', 'dad', 0);

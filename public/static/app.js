@@ -9,7 +9,7 @@ const App = {
     subtitlePresets: [],
     ttsVoices: [],
     jobs: [],
-    settings: { has_openai: false, has_elevenlabs: false, has_n8n: false },
+    settings: { has_openai: false, has_typecast: false, has_n8n: false, tts_provider: 'typecast' },
 
     // 현재 작업 폼
     form: {
@@ -19,7 +19,10 @@ const App = {
       persona_id: null,
       subtitle_preset_id: 1,
       tts_voice_id: 1,
-      value_keywords: []
+      value_keywords: [],
+      // Typecast 전용 옵션
+      tts_emotion: 'smart',   // smart | normal | happy | sad | angry | whisper | toneup | tonedown
+      tts_speed: 1.0          // 0.9 ~ 1.1
     },
 
     // 현재 작업 결과
@@ -30,6 +33,18 @@ const App = {
     editingScript: false,
     currentAudio: null
   },
+
+  // ── Typecast 감정 옵션 ─────────────────────────────────────────
+  emotionOptions: [
+    { value: 'smart',    label: '🧠 스마트 (자동)', desc: '문맥을 분석해 최적 감정 자동 적용' },
+    { value: 'normal',   label: '😐 일반',          desc: '차분하고 자연스러운 톤' },
+    { value: 'happy',    label: '😊 기쁨',          desc: '밝고 따뜻한 긍정적 톤' },
+    { value: 'toneup',   label: '🔥 업비트',        desc: '생동감 넘치는 에너제틱 톤' },
+    { value: 'sad',      label: '🥺 공감',          desc: '부드러운 공감과 감성 톤' },
+    { value: 'whisper',  label: '🤫 속삭임',        desc: '친밀하고 은밀한 속삭임 톤' },
+    { value: 'tonedown', label: '🎓 진지함',        desc: '신뢰감 있는 차분한 전문가 톤' },
+    { value: 'angry',    label: '😤 강조',          desc: '강렬하고 단호한 강조 톤' }
+  ],
 
   // ── 가치 키워드 옵션 ──────────────────────────────────────────
   keywordOptions: [
@@ -101,23 +116,26 @@ const App = {
 
   getHeaderHTML() {
     const { settings } = this.state
-    const apiOk = settings.has_openai || settings.has_elevenlabs
     return `
       <header class="header">
         <div class="logo">
           <div class="logo-icon">🎬</div>
           <div>
             <div class="logo-text">AI Studio</div>
-            <div class="logo-sub">페르소나 기반 쇼츠 자동생성 시스템</div>
+            <div class="logo-sub">페르소나 기반 쇼츠 자동생성 · Typecast TTS</div>
           </div>
         </div>
-        <div style="display:flex;align-items:center;gap:0.75rem;">
+        <div style="display:flex;align-items:center;gap:0.75rem;flex-wrap:wrap">
           ${!settings.has_openai ? `<span style="font-size:0.72rem;color:#f59e0b;background:rgba(245,158,11,0.1);border:1px solid rgba(245,158,11,0.3);padding:0.3rem 0.6rem;border-radius:6px;">
             <i class="fas fa-exclamation-triangle" style="margin-right:4px;"></i>OpenAI 키 미설정
-          </span>` : ''}
-          ${!settings.has_elevenlabs ? `<span style="font-size:0.72rem;color:#f59e0b;background:rgba(245,158,11,0.1);border:1px solid rgba(245,158,11,0.3);padding:0.3rem 0.6rem;border-radius:6px;">
-            <i class="fas fa-microphone-slash" style="margin-right:4px;"></i>ElevenLabs 키 미설정
-          </span>` : ''}
+          </span>` : `<span style="font-size:0.72rem;color:#10b981;background:rgba(16,185,129,0.1);border:1px solid rgba(16,185,129,0.3);padding:0.3rem 0.6rem;border-radius:6px;">
+            <i class="fas fa-check-circle" style="margin-right:4px;"></i>OpenAI 연결
+          </span>`}
+          ${!settings.has_typecast ? `<span style="font-size:0.72rem;color:#f59e0b;background:rgba(245,158,11,0.1);border:1px solid rgba(245,158,11,0.3);padding:0.3rem 0.6rem;border-radius:6px;">
+            <i class="fas fa-microphone-slash" style="margin-right:4px;"></i>Typecast 키 미설정
+          </span>` : `<span style="font-size:0.72rem;color:#10b981;background:rgba(16,185,129,0.1);border:1px solid rgba(16,185,129,0.3);padding:0.3rem 0.6rem;border-radius:6px;">
+            <i class="fas fa-microphone" style="margin-right:4px;"></i>Typecast 연결
+          </span>`}
           ${settings.has_n8n ? `<span style="font-size:0.72rem;color:#10b981;background:rgba(16,185,129,0.1);border:1px solid rgba(16,185,129,0.3);padding:0.3rem 0.6rem;border-radius:6px;">
             <i class="fas fa-check-circle" style="margin-right:4px;"></i>n8n 연결됨
           </span>` : ''}
@@ -249,12 +267,16 @@ const App = {
           </div>
         </section>
 
-        <!-- STEP 5: TTS 보이스 -->
+        <!-- STEP 5: TTS 성우 + 감정 선택 -->
         <section class="section">
           <div class="section-title">
             <span class="step-badge">5</span>
-            TTS 성우 선택
+            Typecast 성우 &amp; 감정 선택
+            <span style="font-size:0.62rem;color:#a855f7;background:rgba(168,85,247,0.1);padding:0.15rem 0.4rem;border-radius:4px;margin-left:6px">TYPECAST</span>
           </div>
+
+          <!-- 성우 목록 -->
+          <div style="font-size:0.72rem;color:var(--text-muted);margin-bottom:0.5rem">성우 선택</div>
           <div class="voice-grid" id="voiceList">
             ${ttsVoices.map(v => {
               const genderIcon = v.gender === 'male' ? '👨' : '👩'
@@ -278,6 +300,41 @@ const App = {
                 </div>
               `
             }).join('')}
+          </div>
+
+          <!-- 감정 선택 (Typecast 7감정 + 스마트 자동) -->
+          <div style="font-size:0.72rem;color:var(--text-muted);margin:0.85rem 0 0.5rem">감정 스타일</div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:0.4rem" id="emotionSelector">
+            ${this.emotionOptions.map(e => `
+              <div class="emotion-item ${form.tts_emotion === e.value ? 'selected' : ''}"
+                data-emotion="${e.value}"
+                title="${e.desc}"
+                style="display:flex;align-items:center;gap:0.4rem;padding:0.4rem 0.55rem;
+                  background:${form.tts_emotion === e.value ? 'rgba(124,58,237,0.15)' : 'var(--bg-secondary)'};
+                  border:1px solid ${form.tts_emotion === e.value ? 'rgba(124,58,237,0.5)' : 'var(--border)'};
+                  border-radius:6px;cursor:pointer;transition:all 0.15s">
+                <span style="font-size:0.9rem">${e.label.split(' ')[0]}</span>
+                <span style="font-size:0.7rem;color:${form.tts_emotion === e.value ? 'var(--accent-light)' : 'var(--text-secondary)'}">${e.label.split(' ').slice(1).join(' ')}</span>
+              </div>
+            `).join('')}
+          </div>
+
+          <!-- TTS 속도 슬라이더 -->
+          <div style="margin-top:0.85rem">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:0.35rem">
+              <span style="font-size:0.72rem;color:var(--text-muted)">TTS 속도 (싱크 조절)</span>
+              <span id="speedLabel" style="font-size:0.75rem;font-weight:700;color:var(--accent-light)">${form.tts_speed.toFixed(1)}×</span>
+            </div>
+            <div style="display:flex;align-items:center;gap:0.5rem">
+              <span style="font-size:0.65rem;color:var(--text-muted)">0.9×</span>
+              <input type="range" id="ttsSpeedSlider"
+                min="0.9" max="1.1" step="0.05" value="${form.tts_speed}"
+                style="flex:1;accent-color:#7c3aed;height:4px">
+              <span style="font-size:0.65rem;color:var(--text-muted)">1.1×</span>
+            </div>
+            <div style="font-size:0.65rem;color:var(--text-muted);margin-top:0.3rem;text-align:center">
+              15초 → ${Math.round(15 / form.tts_speed)}초 영상 기준
+            </div>
           </div>
         </section>
 
@@ -449,18 +506,29 @@ const App = {
             TTS 음성 생성
           </div>
           ${hasScript && !hasTTS ? `
-            <button class="btn-accent" id="btnGenerateTTS" ${state.isGeneratingTTS ? 'disabled' : ''}>
-              ${state.isGeneratingTTS
-                ? '<span class="spinner" style="width:14px;height:14px;border-width:2px"></span> 생성 중...'
-                : '<i class="fas fa-play-circle"></i> TTS 생성'}
-            </button>
+            <div style="display:flex;align-items:center;gap:0.5rem;flex-wrap:wrap">
+              <span style="font-size:0.68rem;color:#a78bfa;background:rgba(167,139,250,0.1);padding:0.2rem 0.45rem;border-radius:4px;border:1px solid rgba(167,139,250,0.2)">
+                ${this.emotionOptions.find(e => e.value === state.form.tts_emotion)?.label || state.form.tts_emotion}
+              </span>
+              <span style="font-size:0.68rem;color:#34d399;background:rgba(52,211,153,0.1);padding:0.2rem 0.45rem;border-radius:4px;border:1px solid rgba(52,211,153,0.2)">
+                ${state.form.tts_speed.toFixed(2)}×
+              </span>
+              <button class="btn-accent" id="btnGenerateTTS" ${state.isGeneratingTTS ? 'disabled' : ''}>
+                ${state.isGeneratingTTS
+                  ? '<span class="spinner" style="width:14px;height:14px;border-width:2px"></span> 생성 중...'
+                  : '<i class="fas fa-play-circle"></i> Typecast TTS 생성'}
+              </button>
+            </div>
           ` : ''}
         </div>
 
-        ${!settings.has_elevenlabs && hasScript ? `
+        ${!settings.has_typecast && hasScript ? `
           <div class="api-alert">
             <i class="fas fa-microphone-slash"></i>
-            <div>ElevenLabs API 키가 필요합니다. 대신 브라우저 내장 TTS로 미리 들을 수 있습니다.
+            <div>
+              <strong>Typecast API 키가 필요합니다.</strong><br>
+              <code style="font-size:0.68rem;color:#fcd34d">npx wrangler pages secret put TYPECAST_API_KEY</code><br>
+              <span style="font-size:0.72rem">지금은 브라우저 내장 TTS로 미리 들어보세요.</span>
               <br><button onclick="App.browserTTS()" style="background:none;border:none;color:#fcd34d;cursor:pointer;font-size:0.78rem;padding:0;margin-top:0.3rem">
                 <i class="fas fa-volume-up"></i> 브라우저 TTS로 듣기
               </button>
@@ -480,8 +548,22 @@ const App = {
           </div>
           <audio id="ttsAudio" src="${currentJob.tts_audio_url}" style="display:none"
             ontimeupdate="App.updateAudioTime()" onended="App.onAudioEnded()"></audio>
+          <!-- Typecast 메타 정보 -->
+          ${currentJob.tts_emotion || currentJob.tts_tempo ? `
+            <div style="margin-top:0.5rem;display:flex;gap:0.5rem;flex-wrap:wrap">
+              ${currentJob.tts_emotion ? `<span style="font-size:0.68rem;background:rgba(124,58,237,0.1);color:#a78bfa;padding:0.2rem 0.5rem;border-radius:10px;border:1px solid rgba(124,58,237,0.2)">
+                감정: ${currentJob.tts_emotion}
+              </span>` : ''}
+              ${currentJob.tts_tempo ? `<span style="font-size:0.68rem;background:rgba(16,185,129,0.1);color:#34d399;padding:0.2rem 0.5rem;border-radius:10px;border:1px solid rgba(16,185,129,0.2)">
+                속도: ${currentJob.tts_tempo}×
+              </span>` : ''}
+              <span style="font-size:0.68rem;background:rgba(168,85,247,0.1);color:#c084fc;padding:0.2rem 0.5rem;border-radius:10px;border:1px solid rgba(168,85,247,0.2)">
+                🎙 Typecast
+              </span>
+            </div>
+          ` : ''}
           <div style="margin-top:0.75rem;display:flex;gap:0.5rem">
-            <a href="${currentJob.tts_audio_url}" download="tts_audio.mp3" class="btn-secondary">
+            <a href="${currentJob.tts_audio_url}" download="tts_typecast.mp3" class="btn-secondary">
               <i class="fas fa-download"></i> 다운로드
             </a>
             <button class="btn-secondary" id="btnRegenTTS">
@@ -804,6 +886,31 @@ const App = {
       btnRegenTTS.addEventListener('click', () => this.generateTTS())
     }
 
+    // 감정 선택
+    document.querySelectorAll('.emotion-item').forEach(item => {
+      item.addEventListener('click', () => {
+        this.state.form.tts_emotion = item.dataset.emotion
+        document.querySelectorAll('.emotion-item').forEach(i => {
+          i.style.background = 'var(--bg-secondary)'
+          i.style.borderColor = 'var(--border)'
+          i.querySelector('span:last-child').style.color = 'var(--text-secondary)'
+        })
+        item.style.background = 'rgba(124,58,237,0.15)'
+        item.style.borderColor = 'rgba(124,58,237,0.5)'
+        item.querySelector('span:last-child').style.color = 'var(--accent-light)'
+      })
+    })
+
+    // TTS 속도 슬라이더
+    const speedSlider = document.getElementById('ttsSpeedSlider')
+    if (speedSlider) {
+      speedSlider.addEventListener('input', e => {
+        this.state.form.tts_speed = parseFloat(e.target.value)
+        const lbl = document.getElementById('speedLabel')
+        if (lbl) lbl.textContent = this.state.form.tts_speed.toFixed(2) + '×'
+      })
+    }
+
     // 탭 버튼
     document.querySelectorAll('.tab-btn').forEach(btn => {
       btn.addEventListener('click', () => {
@@ -897,30 +1004,39 @@ const App = {
     }
   },
 
-  // ── TTS 생성 ─────────────────────────────────────────────────
+  // ── TTS 생성 (Typecast) ───────────────────────────────────────
   async generateTTS() {
     if (!this.state.currentJob?.job_id) {
       this.showToast('먼저 대본을 생성해주세요.', 'error'); return
     }
-    if (!this.state.settings.has_elevenlabs) {
-      this.showToast('ElevenLabs API 키가 필요합니다.', 'error'); return
+    if (!this.state.settings.has_typecast) {
+      this.showToast('Typecast API 키가 필요합니다. Deploy 탭에서 설정하세요.', 'error'); return
     }
 
     this.state.isGeneratingTTS = true
     this.rerender()
 
+    const { form } = this.state
+    const selectedVoice = this.state.ttsVoices.find(v => v.id === form.tts_voice_id)
+
     try {
       const res = await axios.post(`/api/jobs/${this.state.currentJob.job_id}/generate-tts`, {
-        voice_id: null,
-        speed: 1.0
+        voice_id: selectedVoice?.voice_id || null,
+        speed: form.tts_speed,
+        emotion_type: form.tts_emotion,
+        audio_format: 'mp3'
       })
       if (res.data.ok) {
         this.state.currentJob.tts_audio_url = res.data.data.audio_url
         this.state.currentJob.stage = 'tts_done'
         this.state.currentJob.status = 'tts_ready'
-        this.showToast('TTS 음성이 생성되었습니다! 🎙️', 'success')
+        this.state.currentJob.tts_emotion = res.data.data.emotion
+        this.state.currentJob.tts_tempo = res.data.data.tempo
+        const emotionLabel = this.emotionOptions.find(e => e.value === res.data.data.emotion)?.label || res.data.data.emotion
+        this.showToast(`TTS 생성 완료! 🎙️ 감정: ${emotionLabel}`, 'success')
       } else {
-        this.showToast(res.data.error || 'TTS 생성 실패', 'error')
+        const hint = res.data.hint ? `\n힌트: ${res.data.hint}` : ''
+        this.showToast((res.data.error || 'TTS 생성 실패') + hint, 'error')
       }
     } catch (e) {
       this.showToast('TTS 오류: ' + (e.response?.data?.error || e.message), 'error')
