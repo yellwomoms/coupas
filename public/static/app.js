@@ -2010,68 +2010,103 @@ const App = {
   },
 
   // ── 원본 영상 없이 TTS만으로 합성 시 확인 팝업 ─────────────────
-  _confirmNoVideoSynthesis() {
+  /**
+   * 범용 확인 모달 (Promise<boolean>)
+   * opts: { emoji, title, body(HTML), cancelText, okText, okDanger }
+   */
+  _showConfirmModal({ emoji='⚠️', title='', body='', cancelText='취소', okText='계속 진행', okDanger=false } = {}) {
     return new Promise((resolve) => {
-      // 기존 모달 제거
-      const existing = document.getElementById('noVideoConfirmModal')
+      const existing = document.getElementById('_synthConfirmModal')
       if (existing) existing.remove()
 
       const modal = document.createElement('div')
-      modal.id = 'noVideoConfirmModal'
-      modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.75);z-index:9999;display:flex;align-items:center;justify-content:center;padding:1rem'
-      modal.innerHTML = `
-        <div style="background:#1a1035;border:1px solid rgba(124,58,237,0.4);border-radius:16px;padding:1.5rem;max-width:340px;width:100%;box-shadow:0 20px 60px rgba(0,0,0,0.6)">
-          <div style="font-size:2rem;text-align:center;margin-bottom:0.75rem">⚠️</div>
-          <div style="font-size:0.95rem;font-weight:700;color:#f8f8f8;text-align:center;margin-bottom:0.5rem">원본 영상이 없습니다</div>
-          <div style="font-size:0.78rem;color:#a0a0b8;text-align:center;line-height:1.6;margin-bottom:1.25rem">
-            원본 영상 없이 합성하면<br>
-            <strong style="color:#fbbf24">TTS 음성만 있는 그라데이션 배경 영상</strong>이 생성됩니다.<br><br>
-            원본 영상(도우인/샤오홍슈 등)을 업로드하면<br>
-            해당 영상 위에 자막이 합성됩니다.
-          </div>
-          <div style="display:flex;gap:0.6rem">
-            <button id="noVideoCancel" style="flex:1;padding:0.65rem;background:rgba(239,68,68,0.15);color:#ef4444;border:1px solid rgba(239,68,68,0.3);border-radius:8px;cursor:pointer;font-size:0.82rem;font-weight:600">
-              ✕ 취소 (영상 업로드)
-            </button>
-            <button id="noVideoContinue" style="flex:1;padding:0.65rem;background:linear-gradient(135deg,#7c3aed,#a855f7);color:white;border:none;border-radius:8px;cursor:pointer;font-size:0.82rem;font-weight:600">
-              그대로 합성
-            </button>
-          </div>
-        </div>
-      `
-      document.body.appendChild(modal)
+      modal.id = '_synthConfirmModal'
+      modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.82);z-index:9999;display:flex;align-items:center;justify-content:center;padding:1rem'
 
-      document.getElementById('noVideoCancel').onclick = () => {
-        modal.remove()
-        resolve(false)
-      }
-      document.getElementById('noVideoContinue').onclick = () => {
-        modal.remove()
-        resolve(true)
-      }
-      // 배경 클릭 시 취소
-      modal.addEventListener('click', (e) => {
-        if (e.target === modal) { modal.remove(); resolve(false) }
-      })
+      const okBg = okDanger
+        ? 'background:linear-gradient(135deg,#dc2626,#ef4444);color:white;border:none;'
+        : 'background:linear-gradient(135deg,#7c3aed,#a855f7);color:white;border:none;'
+
+      modal.innerHTML =
+        '<div style="background:#1a1035;border:1px solid rgba(124,58,237,0.4);border-radius:16px;' +
+        'padding:1.75rem 1.5rem;max-width:360px;width:100%;box-shadow:0 24px 64px rgba(0,0,0,0.7)">' +
+          '<div style="font-size:2.2rem;text-align:center;margin-bottom:0.65rem">' + emoji + '</div>' +
+          '<div style="font-size:0.95rem;font-weight:700;color:#f8f8f8;text-align:center;margin-bottom:0.55rem">' + title + '</div>' +
+          '<div style="font-size:0.78rem;color:#a0a0b8;text-align:center;line-height:1.65;margin-bottom:1.4rem">' + body + '</div>' +
+          '<div style="display:flex;gap:0.6rem">' +
+            '<button id="_synthCancel" style="flex:1;padding:0.7rem;background:rgba(239,68,68,0.12);' +
+            'color:#ef4444;border:1px solid rgba(239,68,68,0.35);border-radius:8px;cursor:pointer;font-size:0.82rem;font-weight:600">' +
+              '✕ ' + cancelText +
+            '</button>' +
+            '<button id="_synthOk" style="flex:1;padding:0.7rem;' + okBg +
+            'border-radius:8px;cursor:pointer;font-size:0.82rem;font-weight:600">' +
+              '✔ ' + okText +
+            '</button>' +
+          '</div>' +
+        '</div>'
+
+      document.body.appendChild(modal)
+      document.getElementById('_synthCancel').onclick = () => { modal.remove(); resolve(false) }
+      document.getElementById('_synthOk').onclick    = () => { modal.remove(); resolve(true)  }
+      modal.addEventListener('click', e => { if (e.target === modal) { modal.remove(); resolve(false) } })
+    })
+  },
+
+  // 하위 호환 래퍼
+  _confirmNoVideoSynthesis() {
+    return this._showConfirmModal({
+      emoji: '🎬',
+      title: '원본 영상이 없습니다',
+      body:  '원본 영상 없이 합성하면<br>' +
+             '<strong style="color:#fbbf24">TTS 음성만 있는 그라데이션 배경 영상</strong>이 생성됩니다.<br><br>' +
+             '원본 영상(도우인/샤오홍슈 등)을 업로드하면<br>해당 영상 위에 자막이 합성됩니다.',
+      cancelText: '취소 — 영상 업로드',
+      okText: '그라데이션 배경으로 합성',
     })
   },
 
 
   async startVideoSynthesis() {
-    if (!this.state.currentJob?.tts_audio_url) {
-      this.showToast('TTS 음성을 먼저 생성해주세요.', 'error'); return
-    }
     if (!this.state.currentJob?.script_content) {
       this.showToast('대본이 없습니다.', 'error'); return
     }
 
-    // ── 원본 영상 없이 합성 시도 시 확인 팝업 ─────────────────────
-    if (!this.state.bgVideoFile) {
-      const confirmed = await this._confirmNoVideoSynthesis()
-      if (!confirmed) {
-        this.showToast('합성이 취소되었습니다. 원본 영상을 업로드해주세요.', 'info')
-        return
-      }
+    const hasTTS   = !!this.state.currentJob?.tts_audio_url
+    const hasVideo = !!this.state.bgVideoFile
+
+    // ── Case 1: TTS도 없고 영상도 없음 ───────────────────────────
+    if (!hasTTS && !hasVideo) {
+      const ok = await this._showConfirmModal({
+        emoji: '❗',
+        title: 'TTS와 원본 영상이 모두 없습니다',
+        body:  '<strong style="color:#fbbf24">TTS 음성</strong>도 <strong style="color:#fbbf24">원본 영상</strong>도 없는 상태입니다.<br><br>' +
+               '진행하면 <strong style="color:#a78bfa">무음 + 그라데이션 배경</strong>에 자막만 표시되는 영상이 생성됩니다.<br><br>' +
+               '그래도 합성하시겠습니까?',
+        cancelText: '취소',
+        okText: '무음 자막 영상으로 합성',
+        okDanger: true,
+      })
+      if (!ok) return
+    }
+    // ── Case 2: TTS 없음 (영상은 있거나 없거나) ──────────────────
+    else if (!hasTTS) {
+      const ok = await this._showConfirmModal({
+        emoji: '🔇',
+        title: 'TTS 음성이 없습니다',
+        body:  'TTS 음성을 아직 생성하지 않은 상태입니다.<br><br>' +
+               (hasVideo
+                 ? '원본 영상의 <strong style="color:#fbbf24">오디오가 유지</strong>된 채 자막만 합성됩니다.'
+                 : '진행하면 <strong style="color:#fbbf24">무음 + 그라데이션 배경</strong> 영상이 생성됩니다.') +
+               '<br><br>TTS를 먼저 생성하는 것을 권장합니다.',
+        cancelText: '취소 — TTS 먼저 생성',
+        okText: hasVideo ? '원본 오디오로 합성' : '무음으로 합성',
+      })
+      if (!ok) return
+    }
+    // ── Case 3: 영상 없음 (TTS는 있음) ──────────────────────────
+    else if (!hasVideo) {
+      const ok = await this._confirmNoVideoSynthesis()
+      if (!ok) return
     }
 
     this._renderCancelFlag = false
@@ -2871,10 +2906,18 @@ const App = {
       this.showToast('대본이 없습니다.', 'error'); return
     }
 
-    // 임시로 silent TTS URL을 null로 설정하지 않고 기존 로직 재활용
-    // bgVideoFile이 없으면 그라데이션 배경 사용
+    // bgVideoFile이 없으면 그라데이션 배경 사용 — 커스텀 확인 모달
     if (!this.state.bgVideoFile) {
-      if (!confirm('원본 영상이 없습니다. 그라데이션 배경으로 자막만 합성할까요?')) return
+      const ok = await this._showConfirmModal({
+        emoji: '🎬',
+        title: '원본 영상이 없습니다',
+        body:  '원본 영상 없이 합성하면<br>' +
+               '<strong style="color:#fbbf24">무음 + 그라데이션 배경 자막 영상</strong>이 생성됩니다.<br><br>' +
+               '원본 영상을 업로드하면 해당 영상 위에 자막이 합성됩니다.',
+        cancelText: '취소 — 영상 업로드',
+        okText: '그라데이션 배경으로 합성',
+      })
+      if (!ok) return
     }
 
     // 오디오 없이 영상합성 — silent audio 생성
