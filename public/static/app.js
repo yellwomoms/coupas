@@ -709,10 +709,10 @@ const App = {
           <div style="background:rgba(16,185,129,0.05);border:1px solid rgba(16,185,129,0.2);border-radius:10px;padding:1rem;text-align:center;margin-bottom:0.75rem">
             <div style="font-size:2rem;margin-bottom:0.5rem">🎬</div>
             <div style="font-size:0.85rem;font-weight:700;color:#10b981;margin-bottom:0.3rem">자막 합성 영상 완성!</div>
-            <div style="font-size:0.72rem;color:var(--text-muted);margin-bottom:0.75rem">TTS 음성 + 자막이 합성된 영상입니다</div>
-            <a href="${currentJob.output_video_url}" download="aistudio_output.webm" 
+            <div style="font-size:0.72rem;color:var(--text-muted);margin-bottom:0.75rem">TTS 음성 + 자막이 합성된 MP4 영상입니다</div>
+            <a href="${currentJob.output_video_url}" download="aistudio_output.mp4" 
               style="display:inline-flex;align-items:center;gap:0.4rem;background:#10b981;color:white;padding:0.55rem 1.2rem;border-radius:8px;text-decoration:none;font-size:0.82rem;font-weight:700">
-              <i class="fas fa-download"></i> 영상 다운로드
+              <i class="fas fa-download"></i> MP4 다운로드
             </a>
           </div>
           <button onclick="App.startVideoSynthesis()" class="btn-secondary" style="width:100%;justify-content:center">
@@ -1481,6 +1481,7 @@ const App = {
     try {
       const videoUrl = await this._renderSubtitleVideo()
       this.state.currentJob.output_video_url = videoUrl
+      this.state.currentJob._videoIsMP4 = true  // mp4 변환 완료 플래그
       this.state.currentJob.stage = 'complete'
       this.state.currentJob.status = 'complete'
 
@@ -1501,7 +1502,7 @@ const App = {
     }
   },
 
-  // ── 내부: Canvas+MediaRecorder로 자막+TTS 합성 ───────────────
+  // ── 내부: Canvas+MediaRecorder로 자막+TTS 합성 → mp4 출력 ──────
   async _renderSubtitleVideo() {
     const job     = this.state.currentJob
     const script  = job.script_content || ''
@@ -1511,7 +1512,6 @@ const App = {
     const fontSize    = parseInt(document.getElementById('subtitleFontSize')?.value || '36')
     const position    = document.getElementById('subtitlePosition')?.value || 'bottom'
     const fontColor   = this.state.subtitleColor || '#ffffff'
-    const showBgBar   = this.state.subtitleBgBar !== false
     const bgCheck = document.getElementById('subtitleBgBar')
     const hasBgBar = bgCheck ? bgCheck.checked : true
 
@@ -1538,7 +1538,7 @@ const App = {
     const lines = script.split('\n').map(l=>l.trim()).filter(l=>l.length > 0)
     const timePerLine = duration / Math.max(lines.length, 1)
 
-    // MediaRecorder 설정
+    // MediaRecorder 설정 (webm으로 녹화 후 ffmpeg으로 mp4 변환)
     const stream = canvas.captureStream(30)
     const audioCtx = new (window.AudioContext || window.webkitAudioContext)()
     const source   = audioCtx.createMediaElementSource(audio)
@@ -1547,10 +1547,12 @@ const App = {
     source.connect(audioCtx.destination)
     stream.addTrack(dest.stream.getAudioTracks()[0])
 
+    // 브라우저 지원 webm mimeType 선택
     const mimeType = MediaRecorder.isTypeSupported('video/webm;codecs=vp9,opus')
       ? 'video/webm;codecs=vp9,opus'
-      : MediaRecorder.isTypeSupported('video/webm')
-        ? 'video/webm' : 'video/webm'
+      : MediaRecorder.isTypeSupported('video/webm;codecs=vp8,opus')
+        ? 'video/webm;codecs=vp8,opus'
+        : 'video/webm'
 
     const recorder = new MediaRecorder(stream, { mimeType, videoBitsPerSecond: 4000000 })
     const chunks   = []
@@ -1577,8 +1579,8 @@ const App = {
 
     const drawFrame = () => {
       const elapsed = (performance.now() - startTime) / 1000
-      const pct = Math.min(elapsed / duration * 100, 98)
-      setProgress(pct, `렌더링 중... (${elapsed.toFixed(1)}s / ${duration.toFixed(1)}s)`)
+      const pct = Math.min(elapsed / duration * 100 * 0.6, 60)  // 0~60%는 녹화 단계
+      setProgress(pct, `녹화 중... (${elapsed.toFixed(1)}s / ${duration.toFixed(1)}s)`)
 
       // 배경 (그라데이션)
       const grad = ctx.createLinearGradient(0, 0, 0, H)
@@ -1657,17 +1659,82 @@ const App = {
     })
 
     cancelAnimationFrame(animFrame)
-    setProgress(99, '마무리 중...')
+    setProgress(65, 'webm 녹화 완료, mp4 변환 중...')
     recorder.stop()
 
     await new Promise(res => { recorder.onstop = res })
     audio.pause()
     audioCtx.close()
 
-    const blob = new Blob(chunks, { type: mimeType })
-    const url  = URL.createObjectURL(blob)
-    setProgress(100, '완료!')
-    return url
+    // ── webm Blob 생성 ──────────────────────────────────────────
+    const webmBlob = new Blob(chunks, { type: mimeType })
+
+    // ── FFmpeg.wasm으로 mp4 변환 ────────────────────────────────
+    try {
+      setProgress(70, 'MP4 변환 준비 중...')
+
+      // FFmpeg 로드 확인
+      const { FFmpeg } = window.FFmpegWASM || {}
+      const { fetchFile } = window.FFmpegUtil || {}
+
+      if (!FFmpeg || !fetchFile) {
+        // FFmpeg 로드 실패 시 webm 그대로 다운로드 (fallback)
+        console.warn('FFmpeg.wasm 로드 실패 → webm fallback')
+        setProgress(100, '완료! (webm 형식)')
+        return URL.createObjectURL(webmBlob)
+      }
+
+      const ffmpeg = new FFmpeg()
+
+      // 진행 콜백
+      ffmpeg.on('progress', ({ progress }) => {
+        const pct = 70 + progress * 28
+        setProgress(pct, `MP4 변환 중... ${Math.round(progress * 100)}%`)
+      })
+      ffmpeg.on('log', ({ message }) => {
+        console.log('[ffmpeg]', message)
+      })
+
+      // FFmpeg Core wasm 로드 (CDN)
+      setProgress(72, 'FFmpeg 코어 로드 중...')
+      await ffmpeg.load({
+        coreURL: 'https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.6/dist/umd/ffmpeg-core.js',
+        wasmURL: 'https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.6/dist/umd/ffmpeg-core.wasm',
+      })
+
+      setProgress(78, '영상 데이터 전달 중...')
+      // webm 파일을 ffmpeg 가상 파일시스템에 쓰기
+      const webmData = await fetchFile(webmBlob)
+      await ffmpeg.writeFile('input.webm', webmData)
+
+      setProgress(82, 'MP4 인코딩 중... (잠시 기다려 주세요)')
+      // webm → mp4 변환 (재인코딩 없이 컨테이너 변환 → 빠름)
+      await ffmpeg.exec([
+        '-i', 'input.webm',
+        '-c:v', 'copy',      // 비디오 스트림 복사 (재인코딩 없음 → 빠름)
+        '-c:a', 'aac',       // 오디오 AAC 인코딩 (mp4 호환)
+        '-movflags', '+faststart',  // 웹 스트리밍 최적화
+        'output.mp4'
+      ])
+
+      setProgress(96, '파일 생성 중...')
+      const mp4Data = await ffmpeg.readFile('output.mp4')
+      const mp4Blob = new Blob([mp4Data.buffer], { type: 'video/mp4' })
+
+      // 정리
+      await ffmpeg.deleteFile('input.webm')
+      await ffmpeg.deleteFile('output.mp4')
+
+      setProgress(100, '완료! MP4 다운로드 준비됨')
+      return URL.createObjectURL(mp4Blob)
+
+    } catch (ffmpegErr) {
+      // FFmpeg 변환 실패 시 webm fallback
+      console.error('FFmpeg 변환 실패:', ffmpegErr)
+      setProgress(100, '완료! (webm 형식 — mp4 변환 실패)')
+      this.showToast('MP4 변환 중 오류가 발생해 webm으로 저장합니다.', 'error')
+      return URL.createObjectURL(webmBlob)
+    }
   },
 
   // ── 브라우저 TTS (API 없을 때 미리듣기) ─────────────────────
