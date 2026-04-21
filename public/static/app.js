@@ -2281,8 +2281,8 @@ const App = {
       width:              W,
       height:             H,
       framerate:          FPS,
-      bitrate:            4_000_000,
-      latencyMode:        'quality',
+      bitrate:            8_000_000,       // 8Mbps — 원본 품질 유지
+      latencyMode:        'realtime',      // 즉시 인코딩 → 끊김 방지
     })
 
     // AudioEncoder 설정
@@ -2343,65 +2343,88 @@ const App = {
     const totalFrames = Math.ceil(duration * FPS)
 
     if (hasBgVideo) {
-      // ── bgVideo 있을 때: seek 방식 (프레임 단위 정확 캡처) ──────
-      // ★ 설계: 각 프레임 번호 f → 대응 bgVideo 시간 = (f/FPS) % vidDur
-      //   seeked 이벤트 대기 후 drawImage → VideoFrame 인코딩
-      //   → 원본 영상 속도 100% 정확 재현
-      bgVideo.pause()
-      bgVideo.loop = false
-      const vidDur = bgVideo.duration || duration
-
-      // seek 헬퍼: t초로 이동 후 seeked 대기 (최대 300ms)
-      const seekTo = (t) => new Promise(r => {
-        const onSeeked = () => { bgVideo.removeEventListener('seeked', onSeeked); r() }
-        bgVideo.addEventListener('seeked', onSeeked)
-        bgVideo.currentTime = t
-        setTimeout(r, 300)  // 타임아웃 안전장치
+      // ── bgVideo 있을 때: play() + requestVideoFrameCallback ──────
+      // rVFC: 브라우저가 실제 새 프레임을 디코딩 완료했을 때만 호출
+      // → seek 방식의 끊김 없이 원본 속도 100% 재현
+      bgVideo.loop  = false
+      bgVideo.muted = true
+      bgVideo.currentTime = 0
+      await new Promise(r => {
+        bgVideo.onseeked = () => { bgVideo.onseeked = null; r() }
+        setTimeout(r, 800)
       })
 
-      // 첫 프레임 seek
-      await seekTo(0)
+      const vidDur = bgVideo.duration || duration
+      let encodedFrames = 0
 
-      for (let f = 0; f < totalFrames; f++) {
-        if (this._renderCancelFlag) { videoEncoder.close(); muxer.finalize(); return null }
+      await new Promise((resolve, reject) => {
+        const onFrame = (now, meta) => {
+          if (this._renderCancelFlag) { resolve(); return }
+          // 현재 비디오 시간 기준으로 타임스탬프 계산 (단조증가 보장)
+          const vidTime   = bgVideo.currentTime
+          const timestamp = Math.round(encodedFrames / FPS * 1_000_000)
+          const frameDur  = Math.round(1_000_000 / FPS)
 
-        // 인코더 큐 백프레셔
-        while (videoEncoder.encodeQueueSize > 10) {
-          await new Promise(r => setTimeout(r, 5))
+          // 캔버스에 그리기
+          const vw = bgVideo.videoWidth  || W
+          const vh = bgVideo.videoHeight || H
+          const scale = Math.max(W / vw, H / vh)
+          ctx.drawImage(bgVideo, (W - vw * scale) / 2, (H - vh * scale) / 2, vw * scale, vh * scale)
+
+          const t = vidTime
+          const seg = segments.find(s => t >= s.start && t < s.end)
+          if (seg) {
+            const lines = seg.text.split('\n').filter(Boolean)
+            this._drawSubtitle(ctx, lines, W, H, fontSize, fontColor, hasBgBar, position, fontFamily, bgColor)
+          }
+
+          // 백프레셔: 큐가 찼으면 잠시 대기 후 인코딩
+          const doEncode = () => {
+            const frame = new VideoFrame(canvas, { timestamp, duration: frameDur })
+            videoEncoder.encode(frame, { keyFrame: encodedFrames % (FPS * 2) === 0 })
+            frame.close()
+            encodedFrames++
+
+            const pct = 30 + (encodedFrames / totalFrames) * 60
+            if (encodedFrames % 15 === 0) setProgress(pct, `프레임 렌더링... ${encodedFrames}/${totalFrames}`)
+
+            if (encodedFrames >= totalFrames) { resolve(); return }
+            // 비디오 루프 처리
+            if (vidTime >= vidDur - 0.1) {
+              bgVideo.currentTime = 0
+              bgVideo.play().catch(() => {})
+            }
+            bgVideo.requestVideoFrameCallback(onFrame)
+          }
+
+          if (videoEncoder.encodeQueueSize > 10) {
+            const wait = () => {
+              if (videoEncoder.encodeQueueSize <= 5) { doEncode(); return }
+              setTimeout(wait, 5)
+            }
+            wait()
+          } else {
+            doEncode()
+          }
         }
 
-        // bgVideo 위치: 영상 길이를 초과하면 루프
-        const vidT = (f / FPS) % vidDur
-        // 이전 프레임과 위치가 다를 때만 seek (1프레임 이상 차이)
-        const prevVidT = ((f - 1) / FPS) % vidDur
-        if (f === 0 || Math.abs(vidT - bgVideo.currentTime) > 0.01 || vidT < prevVidT) {
-          await seekTo(vidT)
+        // rVFC 미지원 브라우저 fallback → rAF
+        if (typeof bgVideo.requestVideoFrameCallback === 'function') {
+          bgVideo.requestVideoFrameCallback(onFrame)
+        } else {
+          // rAF fallback: 30fps 스로틀
+          let lastT = -1
+          const rafLoop = (now) => {
+            if (this._renderCancelFlag || encodedFrames >= totalFrames) { resolve(); return }
+            if (now - lastT >= 1000 / FPS - 1) { lastT = now; onFrame(now, {}) }
+            requestAnimationFrame(rafLoop)
+          }
+          requestAnimationFrame(rafLoop)
         }
+        bgVideo.play().catch(reject)
+      })
 
-        const vw = bgVideo.videoWidth  || W
-        const vh = bgVideo.videoHeight || H
-        const scale = Math.max(W / vw, H / vh)
-        const dw = vw * scale, dh = vh * scale
-        ctx.drawImage(bgVideo, (W - dw) / 2, (H - dh) / 2, dw, dh)
-
-        const t = f / FPS
-        const seg = segments.find(s => t >= s.start && t < s.end)
-        if (seg) {
-          const lines = seg.text.split('\n').filter(Boolean)
-          this._drawSubtitle(ctx, lines, W, H, fontSize, fontColor, hasBgBar, position, fontFamily, bgColor)
-        }
-
-        const timestamp = Math.round(f / FPS * 1_000_000)
-        const frame = new VideoFrame(canvas, { timestamp, duration: Math.round(1_000_000 / FPS) })
-        videoEncoder.encode(frame, { keyFrame: f % (FPS * 2) === 0 })
-        frame.close()
-
-        if (f % 15 === 0) {
-          const pct = 30 + (f / totalFrames) * 60
-          setProgress(pct, `프레임 렌더링... ${f}/${totalFrames}`)
-          if (f % 60 === 0) await new Promise(r => setTimeout(r, 0))
-        }
-      }
+      bgVideo.pause()
 
     } else {
       // ── bgVideo 없을 때: setTimeout yield 오프라인 렌더링 ────────
@@ -3404,8 +3427,8 @@ const App = {
         width:       W,
         height:      H,
         framerate:   FPS,
-        bitrate:     4_000_000,
-        latencyMode: 'quality',
+        bitrate:     8_000_000,       // 8Mbps — 원본 품질 유지
+        latencyMode: 'realtime',      // 즉시 인코딩 → 끊김 방지
       })
 
       setProgress(10, '비디오 프레임 렌더링 중...')
@@ -3413,52 +3436,79 @@ const App = {
       const totalFrames = Math.ceil(estimatedDuration * FPS)
 
       if (hasBgVideo) {
-        // ★ seek 방식으로 통일 (NoAudio도 동일 원칙)
-        bgVideo.pause()
-        bgVideo.loop = false
-        const vidDurNA = bgVideo.duration || estimatedDuration
-
-        const seekToNA = (t) => new Promise(r => {
-          const onSeeked = () => { bgVideo.removeEventListener('seeked', onSeeked); r() }
-          bgVideo.addEventListener('seeked', onSeeked)
-          bgVideo.currentTime = t
-          setTimeout(r, 300)
+        // ★ rVFC 방식 (NoAudio도 동일 원칙) - 원본 속도 100% 재현
+        bgVideo.loop  = false
+        bgVideo.muted = true
+        bgVideo.currentTime = 0
+        await new Promise(r => {
+          bgVideo.onseeked = () => { bgVideo.onseeked = null; r() }
+          setTimeout(r, 800)
         })
-        await seekToNA(0)
 
-        for (let fna = 0; fna < totalFrames; fna++) {
-          if (this._renderCancelFlag) { videoEncoder.close(); muxer.finalize(); return null }
+        const vidDurNA = bgVideo.duration || estimatedDuration
+        let encodedFramesNA = 0
 
-          while (videoEncoder.encodeQueueSize > 10) {
-            await new Promise(r => setTimeout(r, 5))
+        await new Promise((resolve, reject) => {
+          const onFrameNA = (now, meta) => {
+            if (this._renderCancelFlag) { resolve(); return }
+            const vidTime   = bgVideo.currentTime
+            const timestamp = Math.round(encodedFramesNA / FPS * 1_000_000)
+            const frameDur  = Math.round(1_000_000 / FPS)
+
+            const vw = bgVideo.videoWidth || W, vh = bgVideo.videoHeight || H
+            const scale = Math.max(W / vw, H / vh)
+            ctx.drawImage(bgVideo, (W - vw*scale)/2, (H - vh*scale)/2, vw*scale, vh*scale)
+
+            const t = vidTime
+            const seg = segments.find(s => t >= s.start && t < s.end)
+            if (seg) {
+              const lines = seg.text ? seg.text.split('\n').filter(Boolean) : (seg.lines || [])
+              this._drawSubtitle(ctx, lines, W, H, fontSize, fontColor, hasBgBar, position, fontFamily, bgColor)
+            }
+
+            const doEncodeNA = () => {
+              const frame = new VideoFrame(canvas, { timestamp, duration: frameDur })
+              videoEncoder.encode(frame, { keyFrame: encodedFramesNA % (FPS * 2) === 0 })
+              frame.close()
+              encodedFramesNA++
+
+              if (encodedFramesNA % 15 === 0)
+                setProgress(10 + (encodedFramesNA / totalFrames) * 82, `프레임 렌더링... ${encodedFramesNA}/${totalFrames}`)
+
+              if (encodedFramesNA >= totalFrames) { resolve(); return }
+              if (vidTime >= vidDurNA - 0.1) {
+                bgVideo.currentTime = 0
+                bgVideo.play().catch(() => {})
+              }
+              bgVideo.requestVideoFrameCallback(onFrameNA)
+            }
+
+            if (videoEncoder.encodeQueueSize > 10) {
+              const waitNA = () => {
+                if (videoEncoder.encodeQueueSize <= 5) { doEncodeNA(); return }
+                setTimeout(waitNA, 5)
+              }
+              waitNA()
+            } else {
+              doEncodeNA()
+            }
           }
 
-          const vidTNA = (fna / FPS) % vidDurNA
-          const prevVidTNA = ((fna - 1) / FPS) % vidDurNA
-          if (fna === 0 || Math.abs(vidTNA - bgVideo.currentTime) > 0.01 || vidTNA < prevVidTNA) {
-            await seekToNA(vidTNA)
+          if (typeof bgVideo.requestVideoFrameCallback === 'function') {
+            bgVideo.requestVideoFrameCallback(onFrameNA)
+          } else {
+            let lastTNA = -1
+            const rafLoopNA = (now) => {
+              if (this._renderCancelFlag || encodedFramesNA >= totalFrames) { resolve(); return }
+              if (now - lastTNA >= 1000 / FPS - 1) { lastTNA = now; onFrameNA(now, {}) }
+              requestAnimationFrame(rafLoopNA)
+            }
+            requestAnimationFrame(rafLoopNA)
           }
+          bgVideo.play().catch(reject)
+        })
 
-          const vw = bgVideo.videoWidth || W, vh = bgVideo.videoHeight || H
-          const scale = Math.max(W / vw, H / vh)
-          ctx.drawImage(bgVideo, (W - vw*scale)/2, (H - vh*scale)/2, vw*scale, vh*scale)
-
-          const t = fna / FPS
-          const seg = segments.find(s => t >= s.start && t < s.end)
-          if (seg) {
-            const lines = seg.text ? seg.text.split('\n').filter(Boolean) : (seg.lines || [])
-            this._drawSubtitle(ctx, lines, W, H, fontSize, fontColor, hasBgBar, position, fontFamily, bgColor)
-          }
-
-          const timestamp = Math.round(fna / FPS * 1_000_000)
-          const frame = new VideoFrame(canvas, { timestamp, duration: Math.round(1_000_000 / FPS) })
-          videoEncoder.encode(frame, { keyFrame: fna % (FPS * 2) === 0 })
-          frame.close()
-
-          if (fna % 15 === 0)
-            setProgress(10 + (fna / totalFrames) * 82, `프레임 렌더링... ${fna}/${totalFrames}`)
-          if (fna % 60 === 0) await new Promise(r => setTimeout(r, 0))
-        }
+        bgVideo.pause()
 
       } else {
         // 그라데이션: 오프라인 렌더링 + 백프레셔 대기
