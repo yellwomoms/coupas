@@ -3495,76 +3495,75 @@ const App = {
   },
 
   // ── TTS 오디오 에너지 분석 → 실제 음성 구간 감지 (VAD) ──────
-  _detectSpeechRegions(audioBuffer, mergeGap = 0.50) {
-    const sampleRate   = audioBuffer.sampleRate
-    const channelData  = audioBuffer.getChannelData(0)
-    const totalSamples = channelData.length
-    const frameSamples = Math.round(sampleRate * 0.02) // 20ms 프레임
-
-    const frames = []
-    for (let i = 0; i < totalSamples; i += frameSamples) {
-      let sum = 0
-      const end = Math.min(i + frameSamples, totalSamples)
-      for (let j = i; j < end; j++) sum += channelData[j] ** 2
-      frames.push(Math.sqrt(sum / (end - i)))
+  // VAD: mergeGap(초) 이하 무음은 하나의 발화로 합침
+  _detectSpeechRegions(audioBuffer, mergeGap = 0.08) {
+    const sr           = audioBuffer.sampleRate
+    const ch           = audioBuffer.getChannelData(0)
+    const frameLen     = Math.round(sr * 0.02) // 20ms
+    const frames       = []
+    for (let i = 0; i < ch.length; i += frameLen) {
+      let s = 0; const e = Math.min(i + frameLen, ch.length)
+      for (let j = i; j < e; j++) s += ch[j] ** 2
+      frames.push(Math.sqrt(s / (e - i)))
     }
-
     const sorted    = [...frames].sort((a, b) => a - b)
     const median    = sorted[Math.floor(sorted.length * 0.5)] || 0.001
-    const threshold = Math.max(median * 0.15, 0.003)
+    const threshold = Math.max(median * 0.12, 0.002)
+    const MIN_DUR   = 0.06 // 60ms 이상만 발화로 인정
 
-    const MIN_SPEECH = 0.10
-    const regions    = []
-    let inSpeech = false, speechStart = 0
-
+    const regions = []
+    let on = false, t0 = 0
     for (let i = 0; i < frames.length; i++) {
       const t = i * 0.02
-      if (!inSpeech && frames[i] > threshold) {
-        inSpeech = true; speechStart = t
-      } else if (inSpeech && frames[i] <= threshold) {
-        let gapEnd = i
-        while (gapEnd < frames.length && frames[gapEnd] <= threshold) gapEnd++
-        const gapDur = (gapEnd - i) * 0.02
-        if (gapDur < mergeGap && gapEnd < frames.length) {
-          i = gapEnd - 1
-        } else {
-          const dur = t - speechStart
-          if (dur >= MIN_SPEECH) regions.push({ start: speechStart, end: t })
-          inSpeech = false
+      if (!on && frames[i] > threshold)  { on = true; t0 = t }
+      else if (on && frames[i] <= threshold) {
+        let g = i
+        while (g < frames.length && frames[g] <= threshold) g++
+        const gap = (g - i) * 0.02
+        if (gap < mergeGap && g < frames.length) { i = g - 1 }
+        else {
+          if (t - t0 >= MIN_DUR) regions.push({ start: t0, end: t })
+          on = false
         }
       }
     }
-    if (inSpeech) {
-      const dur = frames.length * 0.02 - speechStart
-      if (dur >= MIN_SPEECH) regions.push({ start: speechStart, end: frames.length * 0.02 })
+    if (on) {
+      const t = frames.length * 0.02
+      if (t - t0 >= MIN_DUR) regions.push({ start: t0, end: t })
     }
     return regions
   },
 
-  // ── 자막 줄 ↔ VAD 버스트 1:1 매핑 ──────────────────────────
+  // ── 자막 ↔ TTS 정확 싱크 ────────────────────────────────────
+  // 전략: 실제 발화 구간(VAD)을 연속 타임라인으로 만들고,
+  //       각 자막 줄의 글자수 비율로 타임라인 위치를 정한 뒤
+  //       그 위치를 실제 오디오 타임스탬프로 역매핑
   _buildSubtitleSegmentsFromSpeech(script, duration, ctx, fontSize, canvasW, speechRegions) {
-    const totalSpeechDur = speechRegions.reduce((s, r) => s + (r.end - r.start), 0)
-    if (speechRegions.length === 0 || totalSpeechDur < 0.5) {
+    // VAD 없으면 균등분배 폴백
+    if (!speechRegions || speechRegions.length === 0) {
       return this._buildSubtitleSegments(script, duration, ctx, fontSize, canvasW, 0)
     }
 
+    // ── 1) 대본 → 자막 줄 목록 ───────────────────────────────
     const SAFE_W    = canvasW - 120
     const MAX_CHARS = 14
     ctx.font = `bold ${fontSize}px 'Apple SD Gothic Neo','Noto Sans KR',sans-serif`
 
+    // 줄바꿈 + 문장부호 기준 분리
     const rawLines = script.trim().split('\n').filter(l => l.trim())
-    const chunks   = []
+    const chunks = []
     for (const line of rawLines) {
-      const parts = line.split(/(?<=[.!?~。！？,，、])\s*/)
-      for (const p of parts) { if (p.trim()) chunks.push(p.trim()) }
+      for (const p of line.split(/(?<=[.!?~。！？])\s*/)) {
+        if (p.trim()) chunks.push(p.trim())
+      }
     }
     if (chunks.length === 0) chunks.push(script.trim())
 
-    const wrapText = (text) => {
-      const words = text.split(' ')
+    // 각 청크를 canvas 너비 기준으로 자막 줄 분리
+    const wrap = (text) => {
       const result = []
       let cur = ''
-      for (const word of words) {
+      for (const word of text.split(' ')) {
         if (!word) continue
         const cand = cur ? cur + ' ' + word : word
         if (cur && (cand.length > MAX_CHARS || ctx.measureText(cand).width > SAFE_W)) {
@@ -3572,75 +3571,77 @@ const App = {
         } else cur = cand
       }
       if (cur) result.push(cur)
-      const final = []
-      for (const line of result) {
-        if (line.length <= MAX_CHARS && ctx.measureText(line).width <= SAFE_W) {
-          final.push(line)
-        } else {
-          let tmp = ''
-          for (const ch of line) {
-            const test = tmp + ch
-            if ((test.replace(/\s/g,'').length > MAX_CHARS || ctx.measureText(test).width > SAFE_W) && tmp) {
-              final.push(tmp); tmp = ch
-            } else tmp = test
-          }
-          if (tmp) final.push(tmp)
+      // 여전히 긴 줄은 글자 단위 강제 분리
+      const out = []
+      for (const ln of result) {
+        if (ctx.measureText(ln).width <= SAFE_W) { out.push(ln); continue }
+        let tmp = ''
+        for (const ch of ln) {
+          const t2 = tmp + ch
+          if (ctx.measureText(t2).width > SAFE_W && tmp) { out.push(tmp); tmp = ch }
+          else tmp = t2
         }
+        if (tmp) out.push(tmp)
       }
-      return final.length > 0 ? final : [text.substring(0, MAX_CHARS)]
+      return out.length ? out : [text.slice(0, MAX_CHARS)]
     }
 
-    const chunkData = chunks.map(chunk => {
-      const lines      = wrapText(chunk)
-      const totalChars = lines.reduce((s, l) => s + l.replace(/\s/g, '').length, 0) || 1
-      return { lines, totalChars }
-    })
+    const subtitleLines = [] // { text, chars }
+    for (const chunk of chunks) {
+      for (const ln of wrap(chunk)) {
+        subtitleLines.push({ text: ln, chars: ln.replace(/\s/g, '').length || 1 })
+      }
+    }
+    if (subtitleLines.length === 0) return []
 
-    const nChunks  = chunkData.length
-    const nBursts  = speechRegions.length
+    // ── 2) VAD 타임라인 구성 ─────────────────────────────────
+    // 발화 구간들을 이어 붙인 가상 타임라인 (무음 제외)
+    // burstLine[i] = { realStart, realEnd, lineStart(가상), lineEnd(가상) }
+    const totalBurstDur = speechRegions.reduce((s, r) => s + (r.end - r.start), 0)
+    const totalChars    = subtitleLines.reduce((s, l) => s + l.chars, 0)
+
+    // ── 3) 각 자막 줄에 실제 타임스탬프 할당 ────────────────
+    // 글자수 비율 → 가상 타임라인 위치 → 실제 시간으로 변환
+    const realTimeAt = (virtualT) => {
+      // virtualT: 0 ~ totalBurstDur
+      let acc = 0
+      for (const r of speechRegions) {
+        const dur = r.end - r.start
+        if (virtualT <= acc + dur) return r.start + (virtualT - acc)
+        acc += dur
+      }
+      return speechRegions[speechRegions.length - 1].end
+    }
+
     const segments = []
+    let virtCursor = 0
 
-    const burstGroups = []
-    for (let ci = 0; ci < nChunks; ci++) {
-      const b0 = Math.floor(ci * nBursts / nChunks)
-      const b1 = Math.floor((ci + 1) * nBursts / nChunks)
-      burstGroups.push(speechRegions.slice(b0, Math.max(b0 + 1, b1)))
+    for (let i = 0; i < subtitleLines.length; i++) {
+      const { text, chars } = subtitleLines[i]
+      const virtDur  = (chars / totalChars) * totalBurstDur
+      const virtEnd  = virtCursor + virtDur
+
+      const realStart = realTimeAt(virtCursor)
+      const rawEnd    = realTimeAt(Math.min(virtEnd, totalBurstDur))
+
+      // 다음 자막 시작 직전까지 표시 (0.05s 여유)
+      let realEnd
+      if (i < subtitleLines.length - 1) {
+        const nextVirtStart = virtEnd
+        const nextRealStart = realTimeAt(Math.min(nextVirtStart, totalBurstDur))
+        realEnd = Math.max(rawEnd, nextRealStart - 0.05)
+        realEnd = Math.min(realEnd, nextRealStart - 0.02)
+      } else {
+        realEnd = Math.min(rawEnd + 0.4, duration)
+      }
+
+      segments.push({ text, lines: [text], start: realStart, end: Math.max(realEnd, realStart + 0.1) })
+      virtCursor = virtEnd
     }
 
-    for (let ci = 0; ci < nChunks; ci++) {
-      const { lines, totalChars } = chunkData[ci]
-      const group = burstGroups[ci]
-      if (!group || group.length === 0) continue
-
-      const segStart = group[0].start
-      let segEnd
-      if (ci < nChunks - 1) {
-        const nextGroup = burstGroups[ci + 1]
-        const nextStart = nextGroup && nextGroup[0] ? nextGroup[0].start : duration
-        const thisEnd   = group[group.length - 1].end
-        segEnd = Math.min(thisEnd + (nextStart - thisEnd) * 0.5, nextStart - 0.02)
-      } else {
-        segEnd = Math.min(group[group.length - 1].end + 0.3, duration)
-      }
-      const burstDur = Math.max(segEnd - segStart, 0.1)
-
-      if (lines.length === 1) {
-        segments.push({ text: lines[0], lines: [lines[0]], start: segStart, end: segEnd })
-      } else {
-        let t = segStart
-        for (let li = 0; li < lines.length; li++) {
-          const chars   = lines[li].replace(/\s/g, '').length || 1
-          const lineDur = (chars / totalChars) * burstDur
-          const lineEnd = li === lines.length - 1 ? segEnd : t + lineDur
-          segments.push({ text: lines[li], lines: [lines[li]], start: t, end: lineEnd })
-          t += lineDur
-        }
-      }
-    }
-
-    if (segments.length > 0) {
+    if (segments.length > 0)
       segments[segments.length - 1].end = Math.min(segments[segments.length - 1].end, duration)
-    }
+
     return segments
   }
 }
