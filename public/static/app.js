@@ -2520,191 +2520,6 @@ const App = {
     })
   },
 
-  // ── TTS 오디오 에너지 분석 → 실제 음성 구간 감지 (VAD) ────────
-  // AudioBuffer의 RMS 에너지를 20ms 프레임 단위로 분석해
-  // 무음 / 발화 구간을 타임스탬프 배열로 반환
-  _detectSpeechRegions(audioBuffer) {
-    const sampleRate  = audioBuffer.sampleRate
-    const channelData = audioBuffer.getChannelData(0)   // 모노 기준
-    const totalSamples = channelData.length
-    const frameSamples = Math.round(sampleRate * 0.02)  // 20ms 프레임
-
-    // ── 1) RMS 에너지 계산 ────────────────────────────────────────
-    const frames = []
-    for (let i = 0; i < totalSamples; i += frameSamples) {
-      let sum = 0
-      const end = Math.min(i + frameSamples, totalSamples)
-      for (let j = i; j < end; j++) sum += channelData[j] ** 2
-      frames.push(Math.sqrt(sum / (end - i)))
-    }
-
-    // ── 2) 동적 임계값: 전체 RMS 중앙값의 15% ─────────────────────
-    const sorted = [...frames].sort((a, b) => a - b)
-    const median = sorted[Math.floor(sorted.length * 0.5)] || 0.001
-    const threshold = Math.max(median * 0.15, 0.003)   // 최소 임계값 보장
-
-    // ── 3) 음성/무음 구간 통합 (짧은 무음은 연결) ─────────────────
-    // ★ MERGE_GAP=0.30s: 300ms 미만 무음은 연결 → 문장 단위 버스트 감지
-    const MERGE_GAP  = 0.30   // 300ms 이하 무음은 연결 (단어→문장 단위)
-    const MIN_SPEECH = 0.15   // 150ms 이하 발화는 무시
-
-    let regions = []
-    let inSpeech = false
-    let speechStart = 0
-
-    for (let i = 0; i < frames.length; i++) {
-      const t = i * 0.02
-      if (!inSpeech && frames[i] > threshold) {
-        inSpeech = true
-        speechStart = t
-      } else if (inSpeech && frames[i] <= threshold) {
-        // 짧은 무음 → 앞뒤를 합칠지 확인
-        let gapEnd = i
-        while (gapEnd < frames.length && frames[gapEnd] <= threshold) gapEnd++
-        const gapDur = (gapEnd - i) * 0.02
-        if (gapDur < MERGE_GAP && gapEnd < frames.length) {
-          // 짧은 무음 → 합치기 (계속 발화 중)
-          i = gapEnd - 1
-        } else {
-          // 충분한 무음 → 구간 종료
-          const dur = t - speechStart
-          if (dur >= MIN_SPEECH) regions.push({ start: speechStart, end: t })
-          inSpeech = false
-        }
-      }
-    }
-    if (inSpeech) {
-      const dur = frames.length * 0.02 - speechStart
-      if (dur >= MIN_SPEECH) regions.push({ start: speechStart, end: frames.length * 0.02 })
-    }
-
-    return regions
-  },
-
-  // ── VAD 기반 자막 세그먼트 빌더 ────────────────────────────────
-  // 전략: VAD 버스트를 자막 줄에 1:1 직접 매핑 → TTS와 정확히 동기화
-  _buildSubtitleSegmentsFromSpeech(script, duration, ctx, fontSize, canvasW, speechRegions) {
-    // VAD 구간이 없거나 너무 짧으면 CPS 기반 폴백
-    const totalSpeechDur = speechRegions.reduce((s, r) => s + (r.end - r.start), 0)
-    if (speechRegions.length === 0 || totalSpeechDur < 1.0) {
-      return this._buildSubtitleSegments(script, duration, ctx, fontSize, canvasW, 0)
-    }
-
-    // ── 1) 대본을 자막 줄 단위로 분해 ────────────────────────────
-    const SAFE_W = canvasW - 120
-    const MAX_CHARS = 14
-    ctx.font = `bold ${fontSize}px 'Apple SD Gothic Neo','Noto Sans KR',sans-serif`
-
-    const wrapText = (text) => {
-      const words = text.split(' ')
-      const lines = [], result = []
-      let cur = ''
-      for (const word of words) {
-        if (!word) continue
-        const cand = cur ? cur + ' ' + word : word
-        if (cur && (cand.length > MAX_CHARS || ctx.measureText(cand).width > SAFE_W)) {
-          lines.push(cur); cur = word
-        } else cur = cand
-      }
-      if (cur) lines.push(cur)
-      for (const line of lines) {
-        if (line.length <= MAX_CHARS && ctx.measureText(line).width <= SAFE_W) {
-          result.push(line)
-        } else {
-          let tmp = ''
-          for (const ch of line) {
-            const test = tmp + ch
-            if ((test.replace(/\s/g,'').length > MAX_CHARS || ctx.measureText(test).width > SAFE_W) && tmp) {
-              result.push(tmp); tmp = ch
-            } else tmp = test
-          }
-          if (tmp) result.push(tmp)
-        }
-      }
-      return result.length > 0 ? result : [text.substring(0, MAX_CHARS)]
-    }
-
-    // 대본 → 문장 단위 청크 → 자막 줄 목록
-    const rawLines = script.trim().split('\n').filter(l => l.trim())
-    const chunks = []
-    for (const line of rawLines) {
-      for (const p of line.split(/(?<=[.!?~。！？])\s*/)) {
-        if (p.trim()) chunks.push(p.trim())
-      }
-    }
-    if (chunks.length === 0) chunks.push(script.trim())
-
-    const subtitleLines = []
-    for (const chunk of chunks) {
-      for (const line of wrapText(chunk)) subtitleLines.push(line)
-    }
-    if (subtitleLines.length === 0) return []
-
-    const nLines   = subtitleLines.length
-    const nBursts  = speechRegions.length
-
-    // ── 2) VAD 버스트를 자막 줄에 1:1 매핑 ─────────────────────
-    // 버스트 수와 자막 줄 수가 다르면 비율로 묶어서 처리
-    // 예) 버스트 10개, 자막 줄 8개 → 줄당 평균 1.25 버스트 배정
-    const segments = []
-
-    if (nBursts >= nLines) {
-      // 버스트 수 >= 자막 줄 수: 버스트를 nLines개 그룹으로 묶기
-      const burstsPerLine = nBursts / nLines
-      for (let li = 0; li < nLines; li++) {
-        const bStart = Math.floor(li * burstsPerLine)
-        const bEnd   = Math.floor((li + 1) * burstsPerLine)
-        const group  = speechRegions.slice(bStart, bEnd)
-        if (group.length === 0) continue
-        const segStart = group[0].start
-        // 다음 줄 시작 직전까지 (무음 중간 지점)
-        let segEnd
-        if (li < nLines - 1) {
-          const nextBStart = Math.floor((li + 1) * burstsPerLine)
-          const nextBurst  = speechRegions[nextBStart]
-          segEnd = nextBurst
-            ? group[group.length - 1].end + (nextBurst.start - group[group.length - 1].end) * 0.5
-            : group[group.length - 1].end
-        } else {
-          segEnd = Math.min(group[group.length - 1].end + 0.3, duration)
-        }
-        segments.push({ text: subtitleLines[li], lines: [subtitleLines[li]], start: segStart, end: segEnd })
-      }
-    } else {
-      // 버스트 수 < 자막 줄 수: 각 버스트 내에서 자막 줄을 글자수 비율로 분할
-      const linesPerBurst = nLines / nBursts
-      let lineIdx = 0
-      for (let bi = 0; bi < nBursts; bi++) {
-        const burst = speechRegions[bi]
-        const burstDur = burst.end - burst.start
-        const lCount = Math.round((bi + 1) * linesPerBurst) - Math.round(bi * linesPerBurst)
-        const lSlice = subtitleLines.slice(lineIdx, lineIdx + lCount)
-        if (lSlice.length === 0) continue
-        const totalChars = lSlice.reduce((s, l) => s + l.replace(/\s/g,'').length, 0) || 1
-        let t = burst.start
-        for (const line of lSlice) {
-          const chars = line.replace(/\s/g,'').length || 1
-          const dur   = (chars / totalChars) * burstDur
-          segments.push({ text: line, lines: [line], start: t, end: t + dur })
-          t += dur
-        }
-        lineIdx += lCount
-      }
-      // 남은 줄 처리
-      while (lineIdx < nLines) {
-        const last = segments[segments.length - 1]
-        const end  = last ? Math.min(last.end + 0.5, duration) : duration
-        segments.push({ text: subtitleLines[lineIdx], lines: [subtitleLines[lineIdx]], start: last?.end || 0, end })
-        lineIdx++
-      }
-    }
-
-    // 마지막 클램프
-    if (segments.length > 0) {
-      segments[segments.length - 1].end = Math.min(segments[segments.length - 1].end, duration)
-    }
-    return segments
-  },
 
   // ── 자막 세그먼트 빌더 (폴백용 — VAD 없을 때) ───────────────────
   // 대본 → 의미 단위 분리 → 최대 너비 기준 줄바꿈 → 타임코드 할당
@@ -3673,3 +3488,181 @@ const App = {
 
 // 앱 시작
 document.addEventListener('DOMContentLoaded', () => App.init())
+\n  // ── TTS 오디오 에너지 분석 → 실제 음성 구간 감지 (VAD) ────────
+  // MERGE_GAP을 크게(500ms) 써서 문장/구절 단위 버스트를 반환
+  _detectSpeechRegions(audioBuffer, mergeGap = 0.50) {
+    const sampleRate   = audioBuffer.sampleRate
+    const channelData  = audioBuffer.getChannelData(0)
+    const totalSamples = channelData.length
+    const frameSamples = Math.round(sampleRate * 0.02)   // 20ms 프레임
+
+    // 1) RMS 에너지 계산
+    const frames = []
+    for (let i = 0; i < totalSamples; i += frameSamples) {
+      let sum = 0
+      const end = Math.min(i + frameSamples, totalSamples)
+      for (let j = i; j < end; j++) sum += channelData[j] ** 2
+      frames.push(Math.sqrt(sum / (end - i)))
+    }
+
+    // 2) 동적 임계값 (중앙값의 15%, 최소 0.003)
+    const sorted    = [...frames].sort((a, b) => a - b)
+    const median    = sorted[Math.floor(sorted.length * 0.5)] || 0.001
+    const threshold = Math.max(median * 0.15, 0.003)
+
+    // 3) 음성 구간 추출 (짧은 무음은 mergeGap 기준으로 합침)
+    const MIN_SPEECH = 0.10
+    const regions    = []
+    let inSpeech = false, speechStart = 0
+
+    for (let i = 0; i < frames.length; i++) {
+      const t = i * 0.02
+      if (!inSpeech && frames[i] > threshold) {
+        inSpeech = true; speechStart = t
+      } else if (inSpeech && frames[i] <= threshold) {
+        let gapEnd = i
+        while (gapEnd < frames.length && frames[gapEnd] <= threshold) gapEnd++
+        const gapDur = (gapEnd - i) * 0.02
+        if (gapDur < mergeGap && gapEnd < frames.length) {
+          i = gapEnd - 1   // 짧은 무음 → 합치기
+        } else {
+          const dur = t - speechStart
+          if (dur >= MIN_SPEECH) regions.push({ start: speechStart, end: t })
+          inSpeech = false
+        }
+      }
+    }
+    if (inSpeech) {
+      const dur = frames.length * 0.02 - speechStart
+      if (dur >= MIN_SPEECH) regions.push({ start: speechStart, end: frames.length * 0.02 })
+    }
+    return regions
+  },
+
+  // ── 자막 줄 ↔ VAD 버스트 1:1 매핑 ──────────────────────────────
+  // 전략:
+  //   1) 대본을 문장(청크) 단위로 분해 → 각 청크를 wrapText로 자막 줄 목록으로 변환
+  //   2) VAD(mergeGap=500ms)로 문장 단위 버스트 감지
+  //   3) 청크 수 ↔ 버스트 수 1:1 정렬
+  //      - 청크 1개 = 버스트 1개 → 버스트 시간 그대로 사용
+  //      - 버스트 1개에 여러 자막 줄이 있으면 글자수 비율로 세분
+  _buildSubtitleSegmentsFromSpeech(script, duration, ctx, fontSize, canvasW, speechRegions) {
+    // VAD 구간이 없으면 CPS 폴백
+    const totalSpeechDur = speechRegions.reduce((s, r) => s + (r.end - r.start), 0)
+    if (speechRegions.length === 0 || totalSpeechDur < 0.5) {
+      return this._buildSubtitleSegments(script, duration, ctx, fontSize, canvasW, 0)
+    }
+
+    // ── 1) 대본 → 청크 분해 ───────────────────────────────────────
+    const SAFE_W    = canvasW - 120
+    const MAX_CHARS = 14
+    ctx.font = `bold ${fontSize}px 'Apple SD Gothic Neo','Noto Sans KR',sans-serif`
+
+    // 줄바꿈 단위로 1차 분리 → 문장부호 기준 2차 분리
+    const rawLines = script.trim().split('\n').filter(l => l.trim())
+    const chunks   = []
+    for (const line of rawLines) {
+      // 마침표·느낌표·물음표 뒤 공백 기준 분리
+      const parts = line.split(/(?<=[.!?~。！？,，、])\s*/)
+      for (const p of parts) {
+        if (p.trim()) chunks.push(p.trim())
+      }
+    }
+    if (chunks.length === 0) chunks.push(script.trim())
+
+    // 각 청크를 자막 줄로 래핑 (MAX_CHARS / pixel 기준)
+    const wrapText = (text) => {
+      const words  = text.split(' ')
+      const result = []
+      let cur      = ''
+      for (const word of words) {
+        if (!word) continue
+        const cand = cur ? cur + ' ' + word : word
+        if (cur && (cand.length > MAX_CHARS || ctx.measureText(cand).width > SAFE_W)) {
+          result.push(cur); cur = word
+        } else cur = cand
+      }
+      if (cur) result.push(cur)
+      // 여전히 너무 긴 줄은 글자 단위 강제 분리
+      const final = []
+      for (const line of result) {
+        if (line.length <= MAX_CHARS && ctx.measureText(line).width <= SAFE_W) {
+          final.push(line)
+        } else {
+          let tmp = ''
+          for (const ch of line) {
+            const test = tmp + ch
+            if ((test.replace(/\s/g,'').length > MAX_CHARS || ctx.measureText(test).width > SAFE_W) && tmp) {
+              final.push(tmp); tmp = ch
+            } else tmp = test
+          }
+          if (tmp) final.push(tmp)
+        }
+      }
+      return final.length > 0 ? final : [text.substring(0, MAX_CHARS)]
+    }
+
+    // 청크 → { lines[], totalChars } 목록
+    const chunkData = chunks.map(chunk => {
+      const lines      = wrapText(chunk)
+      const totalChars = lines.reduce((s, l) => s + l.replace(/\s/g, '').length, 0) || 1
+      return { lines, totalChars }
+    })
+
+    // ── 2) VAD 버스트 수 조정 ────────────────────────────────────
+    // 청크 수와 버스트 수가 다르면 비율로 묶어서 청크 수에 맞게 조정
+    const nChunks  = chunkData.length
+    const nBursts  = speechRegions.length
+    const segments = []
+
+    // 버스트를 청크 수만큼 그룹핑
+    const burstGroups = []
+    for (let ci = 0; ci < nChunks; ci++) {
+      const b0 = Math.floor(ci * nBursts / nChunks)
+      const b1 = Math.floor((ci + 1) * nBursts / nChunks)
+      const group = speechRegions.slice(b0, Math.max(b0 + 1, b1))
+      burstGroups.push(group)
+    }
+
+    // ── 3) 각 청크에 버스트 그룹 타임을 할당 ────────────────────
+    for (let ci = 0; ci < nChunks; ci++) {
+      const { lines, totalChars } = chunkData[ci]
+      const group = burstGroups[ci]
+      if (!group || group.length === 0) continue
+
+      const segStart = group[0].start
+      // segEnd: 이 그룹의 마지막 버스트 끝 ~ 다음 그룹 시작 중간
+      let segEnd
+      if (ci < nChunks - 1) {
+        const nextGroup = burstGroups[ci + 1]
+        const nextStart = nextGroup && nextGroup[0] ? nextGroup[0].start : duration
+        const thisEnd   = group[group.length - 1].end
+        // 현재 발화 끝과 다음 발화 시작의 중간점 (또는 현재 발화 끝에서 최대 0.3s)
+        segEnd = Math.min(thisEnd + (nextStart - thisEnd) * 0.5, nextStart - 0.02)
+      } else {
+        segEnd = Math.min(group[group.length - 1].end + 0.3, duration)
+      }
+      const burstDur = Math.max(segEnd - segStart, 0.1)
+
+      // 자막 줄이 1줄이면 버스트 전체 사용
+      if (lines.length === 1) {
+        segments.push({ text: lines[0], lines: [lines[0]], start: segStart, end: segEnd })
+      } else {
+        // 여러 줄이면 글자수 비율로 버스트 시간 세분
+        let t = segStart
+        for (let li = 0; li < lines.length; li++) {
+          const chars   = lines[li].replace(/\s/g, '').length || 1
+          const lineDur = (chars / totalChars) * burstDur
+          const lineEnd = li === lines.length - 1 ? segEnd : t + lineDur
+          segments.push({ text: lines[li], lines: [lines[li]], start: t, end: lineEnd })
+          t += lineDur
+        }
+      }
+    }
+
+    // 마지막 세그먼트 클램프
+    if (segments.length > 0) {
+      segments[segments.length - 1].end = Math.min(segments[segments.length - 1].end, duration)
+    }
+    return segments
+  },
