@@ -146,8 +146,15 @@ const App = {
         window.__INIT_DATA__ = null // 메모리 해제
       } else {
         // 폴백: API 호출
-        const res = await axios.get('/api/init')
-        d = res.data.data
+        let res
+        try {
+          res = await axios.get('/api/init')
+        } catch (fetchErr) {
+          console.error('/api/init 네트워크 오류:', fetchErr)
+          // API 자체가 실패해도 빈 데이터로 앱을 표시
+          d = { personas:[], subtitlePresets:[], ttsVoices:[], settings:{}, productionPresets:[] }
+        }
+        if (!d) d = res?.data?.data || { personas:[], subtitlePresets:[], ttsVoices:[], settings:{}, productionPresets:[] }
       }
 
       this.state.personas          = d.personas          || []
@@ -178,6 +185,8 @@ const App = {
       this.rerender()
     } catch (e) {
       console.error('초기 데이터 로딩 실패:', e)
+      // 실패해도 빈 상태로 앱 표시 (로딩 화면에서 멈추지 않도록)
+      this.rerender()
       this.showToast('데이터 로딩 실패. 새로고침해주세요.', 'error')
     }
   },
