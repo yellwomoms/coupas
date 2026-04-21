@@ -44,7 +44,7 @@ const App = {
 
     // ── 자막 상세 설정 ─────────────────────────────────────
     subtitleFont: 'NanumSquareRound',
-    subtitleFontSize: 39,
+    subtitleFontSize: 41,
     subtitlePosition: 'middle',
     subtitleFontColor: '#FFFFFF',       // 글자 색
     subtitleBgColor: 'rgba(0,0,0,0.65)', // 배경 색
@@ -805,10 +805,10 @@ const App = {
             <div style="display:grid;grid-template-columns:1fr 1fr;gap:0.5rem;margin-bottom:0.55rem">
               <div>
                 <label style="font-size:0.65rem;color:var(--text-muted);font-weight:600;display:block;margin-bottom:0.2rem">
-                  글자 크기 <strong style="color:var(--text-primary);font-size:0.72rem" id="fontSizeValResynth">${state.subtitleFontSize||39}px</strong>
+                  글자 크기 <strong style="color:var(--text-primary);font-size:0.72rem" id="fontSizeValResynth">${state.subtitleFontSize||41}px</strong>
                 </label>
                 <input type="range" id="subtitleFontSizeResynth" min="20" max="72" step="1"
-                  value="${state.subtitleFontSize||39}"
+                  value="${state.subtitleFontSize||41}"
                   style="width:100%;accent-color:#7c3aed;cursor:pointer"
                   oninput="App.state.subtitleFontSize=parseInt(this.value);const el=document.getElementById('fontSizeValResynth');if(el)el.textContent=this.value+'px'">
               </div>
@@ -1009,10 +1009,10 @@ const App = {
                 <div style="display:grid;grid-template-columns:1fr 1fr;gap:0.5rem;margin-bottom:0.6rem">
                   <div>
                     <label style="font-size:0.68rem;color:var(--text-muted);font-weight:600">
-                      글자 크기 <strong style="color:var(--text-primary);font-size:0.75rem" id="fontSizeValMain">${state.subtitleFontSize||39}px</strong>
+                      글자 크기 <strong style="color:var(--text-primary);font-size:0.75rem" id="fontSizeValMain">${state.subtitleFontSize||41}px</strong>
                     </label>
                     <input type="range" id="subtitleFontSize" min="20" max="72" step="1"
-                      value="${state.subtitleFontSize||39}"
+                      value="${state.subtitleFontSize||41}"
                       style="width:100%;accent-color:#7c3aed;cursor:pointer;margin-top:0.35rem;display:block"
                       oninput="App.state.subtitleFontSize=parseInt(this.value);const el=document.getElementById('fontSizeValMain');if(el)el.textContent=this.value+'px'">
                   </div>
@@ -1086,7 +1086,7 @@ const App = {
                 <!-- 실시간 자막 미리보기 -->
                 <div style="background:#111;border-radius:8px;padding:0.75rem;position:relative;overflow:hidden;min-height:52px;display:flex;align-items:${(state.subtitlePosition||'middle')==='top'?'flex-start':(state.subtitlePosition||'middle')==='middle'?'center':'flex-end'};justify-content:center">
                   <div style="padding:0.3rem 0.7rem;border-radius:5px;background:${state.subtitleBgBar!==false?(state.subtitleBgColor||'rgba(0,0,0,0.65)'):'transparent'};text-align:center;max-width:90%">
-                    <span style="font-family:${state.subtitleFont||'NanumSquareRound'};font-size:${Math.round((state.subtitleFontSize||39)*0.55)}px;color:${state.subtitleFontColor||'#FFFFFF'};font-weight:bold;text-shadow:1px 1px 2px ${state.subtitleBgBar!==false?'transparent':'#000'};line-height:1.3">
+                    <span style="font-family:${state.subtitleFont||'NanumSquareRound'};font-size:${Math.round((state.subtitleFontSize||41)*0.55)}px;color:${state.subtitleFontColor||'#FFFFFF'};font-weight:bold;text-shadow:1px 1px 2px ${state.subtitleBgBar!==false?'transparent':'#000'};line-height:1.3">
                       자막 미리보기 텍스트 — ABC 가나다
                     </span>
                   </div>
@@ -1149,10 +1149,10 @@ const App = {
               <div style="display:grid;grid-template-columns:1fr 1fr;gap:0.5rem;margin-bottom:0.5rem">
                 <div>
                   <label style="font-size:0.65rem;color:var(--text-muted);display:block;margin-bottom:0.2rem">
-                    글자 크기 <strong style="color:var(--text-primary);font-size:0.72rem" id="fontSizeValNoTTS">${state.subtitleFontSize||39}px</strong>
+                    글자 크기 <strong style="color:var(--text-primary);font-size:0.72rem" id="fontSizeValNoTTS">${state.subtitleFontSize||41}px</strong>
                   </label>
                   <input type="range" id="subtitleFontSizeNoTTS" min="20" max="72" step="1"
-                    value="${state.subtitleFontSize||39}"
+                    value="${state.subtitleFontSize||41}"
                     style="width:100%;accent-color:#7c3aed;cursor:pointer"
                     oninput="App.state.subtitleFontSize=parseInt(this.value);const el=document.getElementById('fontSizeValNoTTS');if(el)el.textContent=this.value+'px'">
                 </div>
@@ -2177,7 +2177,7 @@ const App = {
     }
   },
 
-  // ── 내부: bgVideo captureStream 방식 - 원본 비디오 픽셀 그대로 + 자막/오디오 합성 ──
+  // ── 내부: WebCodecs H.264 MP4 합성 (bgVideo play + rVFC 캡처) ──
   async _renderSubtitleVideo() {
     const job      = this.state.currentJob
     const script   = job.script_content || ''
@@ -2187,7 +2187,7 @@ const App = {
     const fontSizeEl = document.getElementById('subtitleFontSize')
     const positionEl = document.getElementById('subtitlePosition')
     const bgBarEl    = document.getElementById('subtitleBgBar')
-    const fontSize   = parseInt(fontSizeEl?.value || this.state.subtitleFontSize || '39')
+    const fontSize   = parseInt(fontSizeEl?.value || this.state.subtitleFontSize || '41')
     const position   = positionEl?.value || this.state.subtitlePosition || 'middle'
     const fontColor  = this.state.subtitleFontColor || this.state.subtitleColor || '#ffffff'
     const hasBgBar   = bgBarEl ? bgBarEl.checked : (this.state.subtitleBgBar !== false)
@@ -2197,16 +2197,11 @@ const App = {
     this.state.subtitlePosition = position
     this.state.subtitleBgBar    = hasBgBar
 
-    // ── 자막 Canvas (오버레이 전용 - 배경 투명) ──────────────────
     const W = 720, H = 1280
-    const subCanvas = document.createElement('canvas')
-    subCanvas.width = W; subCanvas.height = H
-    const subCtx = subCanvas.getContext('2d')
-
-    // 자막 타이밍용 Canvas (측정용)
-    const measCanvas = document.getElementById('synthCanvas')
-    measCanvas.width = W; measCanvas.height = H
-    const measCtx = measCanvas.getContext('2d')
+    const canvas    = document.getElementById('synthCanvas')
+    canvas.width    = W; canvas.height = H
+    canvas.style.display = 'none'
+    const ctx = canvas.getContext('2d')
 
     const hasBgVideo = !!this.state.bgVideoFile
 
@@ -2219,142 +2214,189 @@ const App = {
       if (txt)   txt.textContent = msg || ''
     }
 
-    // ── 오디오 디코딩 (자막 타이밍용) ────────────────────────────
+    // ── 오디오 디코딩 ────────────────────────────────────────────
     setProgress(5, '오디오 로딩 중...')
     const audioResp     = await fetch(audioSrc)
     const audioArrayBuf = await audioResp.arrayBuffer()
-    const audioCtxTmp   = new (window.AudioContext || window.webkitAudioContext)()
-    const audioBuffer   = await audioCtxTmp.decodeAudioData(audioArrayBuf.slice(0))
-    audioCtxTmp.close()
+    const tmpACtx       = new (window.AudioContext || window.webkitAudioContext)()
+    const audioBuffer   = await tmpACtx.decodeAudioData(audioArrayBuf.slice(0))
+    tmpACtx.close()
     const duration = audioBuffer.duration
 
     // ── 자막 세그먼트 생성 ────────────────────────────────────────
     setProgress(8, '자막 세그먼트 생성 중...')
     const speechRegions = this._detectSpeechRegions(audioBuffer)
-    const segments = this._buildSubtitleSegmentsFromSpeech(script, duration, measCtx, fontSize, W, speechRegions)
+    const segments = this._buildSubtitleSegmentsFromSpeech(script, duration, ctx, fontSize, W, speechRegions)
 
-    // ── bgVideo 없으면 기존 MediaRecorder(그라데이션) 방식 ────────
+    // ── bgVideo 없으면 그라데이션 MediaRecorder 폴백 ──────────────
     if (!hasBgVideo) {
       return await this._renderWithMediaRecorder(
-        measCanvas, measCtx, W, H, null, false, audioSrc, duration,
+        canvas, ctx, W, H, null, false, audioSrc, duration,
         segments, fontSize, fontColor, hasBgBar, position, fontFamily, bgColor, setProgress
       )
     }
 
-    // ── bgVideo 있을 때: bgVideo.captureStream() 원본 그대로 사용 ──
-    // bgVideo 엘리먼트에서 직접 스트림 캡처 → 재인코딩/재렌더링 없음
-    setProgress(10, '영상 로딩 중...')
-    const bgVideo = await this._loadBgVideo(this.state.bgVideoFile)
-    bgVideo.loop  = false
-    bgVideo.muted = true
-    bgVideo.currentTime = 0
-    await new Promise(r => { bgVideo.onseeked = () => { bgVideo.onseeked = null; r() }; setTimeout(r, 800) })
-
-    const vidDur = bgVideo.duration || duration
-
-    // TTS 오디오 엘리먼트
-    const audio = new Audio(audioSrc)
-    audio.crossOrigin = 'anonymous'
-    await new Promise((res, rej) => { audio.onloadedmetadata = () => res(); audio.onerror = rej; audio.load() })
-
-    // MediaStream 합성:
-    // 1) bgVideo 원본 비디오 트랙 (원본 픽셀 그대로)
-    // 2) 자막 Canvas 오버레이 트랙
-    // → CanvasCaptureMediaStreamTrack은 compositing 안 되므로
-    //   bgVideo를 synthCanvas에 drawImage하고 자막만 그리는 방식 유지
-    // 단, bgVideo를 requestVideoFrameCallback으로 정확히 캡처하지 않고
-    // bgVideo를 실시간 play()하면서 rAF에서 drawImage → 브라우저가 타이밍 관리
-
-    const synthCanvas = document.getElementById('synthCanvas')
-    // ★ bgVideo 원본 해상도 그대로 사용 → 스케일링 없음 = 원본 품질
-    const VW = bgVideo.videoWidth  || W
-    const VH = bgVideo.videoHeight || H
-    synthCanvas.width  = VW
-    synthCanvas.height = VH
-    const synthCtx = synthCanvas.getContext('2d')
-
-    // AudioContext로 TTS 오디오를 스트림에 연결
-    const audioCtx  = new (window.AudioContext || window.webkitAudioContext)()
-    const audioSrcNode = audioCtx.createMediaElementSource(audio)
-    const audioDest    = audioCtx.createMediaStreamDestination()
-    audioSrcNode.connect(audioDest)
-    audioSrcNode.connect(audioCtx.destination)
-
-    // Canvas 스트림 (자막+비디오 합성된 화면) - 30fps 고정
-    const canvasStream = synthCanvas.captureStream(30)
-
-    // 오디오 트랙 추가
-    canvasStream.addTrack(audioDest.stream.getAudioTracks()[0])
-
-    const mimeType = MediaRecorder.isTypeSupported('video/webm;codecs=vp9,opus')
-      ? 'video/webm;codecs=vp9,opus'
-      : MediaRecorder.isTypeSupported('video/webm;codecs=vp8,opus')
-        ? 'video/webm;codecs=vp8,opus'
-        : 'video/webm'
-
-    const recorder = new MediaRecorder(canvasStream, { mimeType, videoBitsPerSecond: 8_000_000 })
-    const chunks = []
-    recorder.ondataavailable = e => { if (e.data.size > 0) chunks.push(e.data) }
-
-    // bgVideo 루프 처리
-    bgVideo.onended = () => {
-      bgVideo.currentTime = 0
-      bgVideo.play().catch(() => {})
+    // ── mp4-muxer 로드 ────────────────────────────────────────────
+    setProgress(10, 'MP4 인코더 준비 중...')
+    if (!window.Mp4Muxer) {
+      await new Promise((resolve, reject) => {
+        const s = document.createElement('script')
+        s.src = 'https://unpkg.com/mp4-muxer@5.2.2/build/mp4-muxer.js'
+        s.onload = resolve; s.onerror = reject
+        document.head.appendChild(s)
+      })
     }
 
-    setProgress(20, '영상 합성 시작...')
-    recorder.start(100)
-    audio.currentTime = 0
-    bgVideo.play().catch(() => {})
-    audio.play()
+    // WebCodecs 미지원 → MediaRecorder 폴백
+    if (typeof VideoEncoder === 'undefined' || !window.Mp4Muxer) {
+      const bg = await this._loadBgVideo(this.state.bgVideoFile)
+      return await this._renderWithMediaRecorder(
+        canvas, ctx, W, H, bg, true, audioSrc, duration,
+        segments, fontSize, fontColor, hasBgBar, position, fontFamily, bgColor, setProgress
+      )
+    }
 
-    await new Promise((resolve) => {
-      let animId
-      const drawFrame = () => {
-        if (this._renderCancelFlag) {
-          cancelAnimationFrame(animId)
-          recorder.stop(); audio.pause()
-          try { audioCtx.close() } catch(e) {}
-          resolve(); return
-        }
-
-        const elapsed = audio.currentTime
-        setProgress(20 + Math.min(elapsed / duration * 70, 70), `합성 중... ${elapsed.toFixed(1)}s / ${duration.toFixed(1)}s`)
-
-        // ★ bgVideo를 Canvas에 원본 해상도로 그리기 (스케일링 없음)
-        synthCtx.drawImage(bgVideo, 0, 0, VW, VH)
-
-        // 자막 오버레이 (VW/VH 기준)
-        const seg = segments.find(s => elapsed >= s.start && elapsed < s.end)
-        if (seg) {
-          const subLines = seg.text.split('\n').filter(Boolean)
-          this._drawSubtitle(synthCtx, subLines, VW, VH, fontSize, fontColor, hasBgBar, position, fontFamily, bgColor)
-        }
-
-        // captureStream(30)이 자동으로 프레임 관리
-
-        if (!audio.ended && elapsed < duration + 0.1) {
-          animId = requestAnimationFrame(drawFrame)
-        } else {
-          cancelAnimationFrame(animId)
-          bgVideo.onended = null
-          bgVideo.pause()
-          recorder.stop()
-          audio.pause()
-          try { audioCtx.close() } catch(e) {}
-        }
-      }
-      requestAnimationFrame(drawFrame)
-      recorder.onstop = () => resolve()
+    const FPS = 30
+    const { Muxer, ArrayBufferTarget } = window.Mp4Muxer
+    const target = new ArrayBufferTarget()
+    const muxer  = new Muxer({
+      target,
+      video: { codec: 'avc', width: W, height: H },
+      audio: { codec: 'aac', sampleRate: audioBuffer.sampleRate, numberOfChannels: audioBuffer.numberOfChannels },
+      fastStart: 'in-memory'
     })
 
-    if (this._renderCancelFlag) return null
+    // VideoEncoder
+    const videoEncoder = new VideoEncoder({
+      output: (chunk, meta) => muxer.addVideoChunk(chunk, meta),
+      error:  (e) => console.error('VideoEncoder:', e)
+    })
+    videoEncoder.configure({
+      codec: 'avc1.42001f', width: W, height: H,
+      framerate: FPS, bitrate: 6_000_000, latencyMode: 'realtime'
+    })
 
-    setProgress(92, 'WebM 파일 처리 중...')
-    const webmBlob = new Blob(chunks, { type: 'video/webm' })
-    setProgress(100, '✅ 완성!')
-    return { url: URL.createObjectURL(webmBlob), isH264: false }
+    // AudioEncoder
+    const audioEncoder = new AudioEncoder({
+      output: (chunk, meta) => muxer.addAudioChunk(chunk, meta),
+      error:  (e) => console.error('AudioEncoder:', e)
+    })
+    audioEncoder.configure({
+      codec: 'mp4a.40.2', sampleRate: audioBuffer.sampleRate,
+      numberOfChannels: audioBuffer.numberOfChannels, bitrate: 128_000
+    })
+
+    // ── 오디오 인코딩 ────────────────────────────────────────────
+    setProgress(15, '오디오 인코딩 중...')
+    const CHUNK = 4096
+    const sr    = audioBuffer.sampleRate
+    const nCh   = audioBuffer.numberOfChannels
+    const total = audioBuffer.length
+    const chData = []
+    for (let c = 0; c < nCh; c++) chData.push(audioBuffer.getChannelData(c))
+
+    for (let off = 0; off < total; off += CHUNK) {
+      if (this._renderCancelFlag) { videoEncoder.close(); audioEncoder.close(); muxer.finalize(); return null }
+      const frames = Math.min(CHUNK, total - off)
+      const ts     = Math.round(off / sr * 1_000_000)
+      const buf    = new Float32Array(frames * nCh)
+      for (let i = 0; i < frames; i++)
+        for (let c = 0; c < nCh; c++) buf[i * nCh + c] = chData[c][off + i]
+      const ad = new AudioData({ format: 'f32', sampleRate: sr, numberOfFrames: frames, numberOfChannels: nCh, timestamp: ts, data: buf })
+      audioEncoder.encode(ad); ad.close()
+    }
+    await audioEncoder.flush(); audioEncoder.close()
+
+    // ── bgVideo 로드 ─────────────────────────────────────────────
+    setProgress(20, '영상 로딩 중...')
+    const bgVideo = await this._loadBgVideo(this.state.bgVideoFile)
+    bgVideo.loop  = false; bgVideo.muted = true
+    bgVideo.currentTime = 0
+    await new Promise(r => { bgVideo.onseeked = () => { bgVideo.onseeked = null; r() }; setTimeout(r, 800) })
+    const vidDur = bgVideo.duration || duration
+
+    // ── 비디오 프레임 인코딩 (play + rVFC) ───────────────────────
+    setProgress(25, '비디오 합성 중...')
+    const totalFrames = Math.ceil(duration * FPS)
+    let encodedFrames = 0
+
+    await new Promise((resolve, reject) => {
+      const onFrame = () => {
+        if (this._renderCancelFlag) { resolve(); return }
+        if (encodedFrames >= totalFrames) { resolve(); return }
+
+        // bgVideo 루프 처리
+        if (bgVideo.currentTime >= vidDur - 0.05) {
+          bgVideo.currentTime = 0
+          bgVideo.play().catch(() => {})
+        }
+
+        // Canvas 렌더링
+        const vw = bgVideo.videoWidth || W, vh = bgVideo.videoHeight || H
+        const scale = Math.max(W / vw, H / vh)
+        ctx.drawImage(bgVideo, (W - vw*scale)/2, (H - vh*scale)/2, vw*scale, vh*scale)
+
+        // 자막 (encodedFrames 기준 시간으로 정확히 싱크)
+        const t = encodedFrames / FPS
+        const seg = segments.find(s => t >= s.start && t < s.end)
+        if (seg) {
+          const subLines = seg.text.split('\n').filter(Boolean)
+          this._drawSubtitle(ctx, subLines, W, H, fontSize, fontColor, hasBgBar, position, fontFamily, bgColor)
+        }
+
+        // 인코딩 (타임스탬프 단조증가 보장)
+        const ts  = Math.round(encodedFrames / FPS * 1_000_000)
+        const dur = Math.round(1_000_000 / FPS)
+        const frame = new VideoFrame(canvas, { timestamp: ts, duration: dur })
+        videoEncoder.encode(frame, { keyFrame: encodedFrames % (FPS * 2) === 0 })
+        frame.close()
+        encodedFrames++
+
+        if (encodedFrames % 15 === 0) {
+          const pct = 25 + (encodedFrames / totalFrames) * 65
+          setProgress(pct, `비디오 합성 중... ${encodedFrames}/${totalFrames}`)
+        }
+
+        if (encodedFrames >= totalFrames) { resolve(); return }
+
+        // 백프레셔: 큐가 크면 잠시 대기
+        if (videoEncoder.encodeQueueSize > 15) {
+          const waitAndContinue = () => {
+            if (videoEncoder.encodeQueueSize <= 8) {
+              if (typeof bgVideo.requestVideoFrameCallback === 'function')
+                bgVideo.requestVideoFrameCallback(onFrame)
+              else requestAnimationFrame(onFrame)
+            } else setTimeout(waitAndContinue, 5)
+          }
+          waitAndContinue()
+        } else {
+          if (typeof bgVideo.requestVideoFrameCallback === 'function')
+            bgVideo.requestVideoFrameCallback(onFrame)
+          else requestAnimationFrame(onFrame)
+        }
+      }
+
+      bgVideo.play().then(() => {
+        if (typeof bgVideo.requestVideoFrameCallback === 'function')
+          bgVideo.requestVideoFrameCallback(onFrame)
+        else requestAnimationFrame(onFrame)
+      }).catch(reject)
+    })
+
+    bgVideo.pause()
+
+    if (this._renderCancelFlag) { videoEncoder.close(); muxer.finalize(); return null }
+
+    setProgress(92, 'MP4 파일 생성 중...')
+    await videoEncoder.flush()
+    videoEncoder.close()
+    muxer.finalize()
+
+    const mp4Blob = new Blob([target.buffer], { type: 'video/mp4' })
+    setProgress(100, '✅ H.264 MP4 완성!')
+    return { url: URL.createObjectURL(mp4Blob), isH264: true }
   },
+
 
   // ── WebCodecs 미지원 폴백: MediaRecorder 방식 ─────────────────
   async _renderWithMediaRecorder(
@@ -2540,7 +2582,7 @@ const App = {
   },
 
   // ── VAD 기반 자막 세그먼트 빌더 ────────────────────────────────
-  // VAD 기반 자막 싱크 - 무음 경계를 자막 전환 타이밍으로 사용
+  // 전략: VAD 버스트를 자막 줄에 1:1 직접 매핑 → TTS와 정확히 동기화
   _buildSubtitleSegmentsFromSpeech(script, duration, ctx, fontSize, canvasW, speechRegions) {
     // VAD 구간이 없거나 너무 짧으면 CPS 기반 폴백
     const totalSpeechDur = speechRegions.reduce((s, r) => s + (r.end - r.start), 0)
@@ -2548,9 +2590,9 @@ const App = {
       return this._buildSubtitleSegments(script, duration, ctx, fontSize, canvasW, 0)
     }
 
-    // ── 1) 자막 줄 목록 생성 ──────────────────────────────────────
+    // ── 1) 대본을 자막 줄 단위로 분해 ────────────────────────────
     const SAFE_W = canvasW - 120
-    const MAX_LINE_CHARS = 14
+    const MAX_CHARS = 14
     ctx.font = `bold ${fontSize}px 'Apple SD Gothic Neo','Noto Sans KR',sans-serif`
 
     const wrapText = (text) => {
@@ -2560,94 +2602,107 @@ const App = {
       for (const word of words) {
         if (!word) continue
         const cand = cur ? cur + ' ' + word : word
-        if (cur && (cand.length > MAX_LINE_CHARS || ctx.measureText(cand).width > SAFE_W)) {
+        if (cur && (cand.length > MAX_CHARS || ctx.measureText(cand).width > SAFE_W)) {
           lines.push(cur); cur = word
         } else cur = cand
       }
       if (cur) lines.push(cur)
       for (const line of lines) {
-        if (line.length <= MAX_LINE_CHARS && ctx.measureText(line).width <= SAFE_W) {
+        if (line.length <= MAX_CHARS && ctx.measureText(line).width <= SAFE_W) {
           result.push(line)
         } else {
           let tmp = ''
           for (const ch of line) {
             const test = tmp + ch
-            if ((test.replace(/\s/g,'').length > MAX_LINE_CHARS || ctx.measureText(test).width > SAFE_W) && tmp) {
+            if ((test.replace(/\s/g,'').length > MAX_CHARS || ctx.measureText(test).width > SAFE_W) && tmp) {
               result.push(tmp); tmp = ch
             } else tmp = test
           }
           if (tmp) result.push(tmp)
         }
       }
-      return result.length > 0 ? result : [text]
+      return result.length > 0 ? result : [text.substring(0, MAX_CHARS)]
     }
 
+    // 대본 → 문장 단위 청크 → 자막 줄 목록
     const rawLines = script.trim().split('\n').filter(l => l.trim())
     const chunks = []
     for (const line of rawLines) {
-      for (const p of line.split(/(?<=[.!?~。！？])\s*/)) { if (p.trim()) chunks.push(p.trim()) }
+      for (const p of line.split(/(?<=[.!?~。！？])\s*/)) {
+        if (p.trim()) chunks.push(p.trim())
+      }
     }
     if (chunks.length === 0) chunks.push(script.trim())
 
-    const lineGroups = []
+    const subtitleLines = []
     for (const chunk of chunks) {
-      for (const line of wrapText(chunk)) {
-        lineGroups.push({ text: line, chars: line.replace(/\s/g,'').length || 1 })
-      }
+      for (const line of wrapText(chunk)) subtitleLines.push(line)
     }
-    if (lineGroups.length === 0) return []
+    if (subtitleLines.length === 0) return []
 
-    const nLines = lineGroups.length
-    const nBursts = speechRegions.length
+    const nLines   = subtitleLines.length
+    const nBursts  = speechRegions.length
 
-    // ── 2) 각 자막 줄에 VAD 타임라인 배분 ───────────────────────
-    // 전체 글자 수에 비례하여 VAD 타임라인(연속 시간축)을 분할
-    // VAD 무음 구간은 건너뛰고 음성 구간만 사용
-    const totalChars = lineGroups.reduce((s, g) => s + g.chars, 0)
-
-    // VAD를 연속 시간축으로 펼침
-    const vadTimeline = []  // {start, end} 절대 시간
-    for (const r of speechRegions) vadTimeline.push({ start: r.start, end: r.end })
-
-    // 각 자막 줄의 글자 수 비율만큼 VAD 타임라인에서 시간 배분
+    // ── 2) VAD 버스트를 자막 줄에 1:1 매핑 ─────────────────────
+    // 버스트 수와 자막 줄 수가 다르면 비율로 묶어서 처리
+    // 예) 버스트 10개, 자막 줄 8개 → 줄당 평균 1.25 버스트 배정
     const segments = []
-    let vadIdx = 0
-    let vadConsumed = 0  // 현재 VAD 구간에서 소비된 초
 
-    for (let i = 0; i < nLines; i++) {
-      const g = lineGroups[i]
-      let alloc = Math.max(0.4, (g.chars / totalChars) * totalSpeechDur)
-
-      let segStart = null
-      let remaining = alloc
-
-      while (remaining > 0.001 && vadIdx < vadTimeline.length) {
-        const vad = vadTimeline[vadIdx]
-        const avail = (vad.end - vad.start) - vadConsumed
-        const absStart = vad.start + vadConsumed
-
-        if (segStart === null) segStart = absStart
-
-        if (avail <= remaining) {
-          remaining -= avail
-          vadConsumed = 0
-          vadIdx++
+    if (nBursts >= nLines) {
+      // 버스트 수 >= 자막 줄 수: 버스트를 nLines개 그룹으로 묶기
+      const burstsPerLine = nBursts / nLines
+      for (let li = 0; li < nLines; li++) {
+        const bStart = Math.floor(li * burstsPerLine)
+        const bEnd   = Math.floor((li + 1) * burstsPerLine)
+        const group  = speechRegions.slice(bStart, bEnd)
+        if (group.length === 0) continue
+        const segStart = group[0].start
+        // 다음 줄 시작 직전까지 (무음 중간 지점)
+        let segEnd
+        if (li < nLines - 1) {
+          const nextBStart = Math.floor((li + 1) * burstsPerLine)
+          const nextBurst  = speechRegions[nextBStart]
+          segEnd = nextBurst
+            ? group[group.length - 1].end + (nextBurst.start - group[group.length - 1].end) * 0.5
+            : group[group.length - 1].end
         } else {
-          vadConsumed += remaining
-          remaining = 0
+          segEnd = Math.min(group[group.length - 1].end + 0.3, duration)
         }
+        segments.push({ text: subtitleLines[li], lines: [subtitleLines[li]], start: segStart, end: segEnd })
       }
-
-      if (segStart === null) segStart = segments.length > 0 ? segments[segments.length-1].end : 0
-      const segEnd = Math.min(segStart + alloc, duration)
-
-      segments.push({ lines: [g.text], text: g.text, start: Math.max(0, segStart), end: segEnd })
+    } else {
+      // 버스트 수 < 자막 줄 수: 각 버스트 내에서 자막 줄을 글자수 비율로 분할
+      const linesPerBurst = nLines / nBursts
+      let lineIdx = 0
+      for (let bi = 0; bi < nBursts; bi++) {
+        const burst = speechRegions[bi]
+        const burstDur = burst.end - burst.start
+        const lCount = Math.round((bi + 1) * linesPerBurst) - Math.round(bi * linesPerBurst)
+        const lSlice = subtitleLines.slice(lineIdx, lineIdx + lCount)
+        if (lSlice.length === 0) continue
+        const totalChars = lSlice.reduce((s, l) => s + l.replace(/\s/g,'').length, 0) || 1
+        let t = burst.start
+        for (const line of lSlice) {
+          const chars = line.replace(/\s/g,'').length || 1
+          const dur   = (chars / totalChars) * burstDur
+          segments.push({ text: line, lines: [line], start: t, end: t + dur })
+          t += dur
+        }
+        lineIdx += lCount
+      }
+      // 남은 줄 처리
+      while (lineIdx < nLines) {
+        const last = segments[segments.length - 1]
+        const end  = last ? Math.min(last.end + 0.5, duration) : duration
+        segments.push({ text: subtitleLines[lineIdx], lines: [subtitleLines[lineIdx]], start: last?.end || 0, end })
+        lineIdx++
+      }
     }
 
     // 마지막 클램프
-    if (segments.length > 0 && segments[segments.length-1].end > duration)
-      segments[segments.length-1].end = duration
-
+    if (segments.length > 0) {
+      segments[segments.length - 1].end = Math.min(segments[segments.length - 1].end, duration)
+    }
     return segments
   },
 
@@ -3247,7 +3302,7 @@ const App = {
     const fontSizeEl = document.getElementById('subtitleFontSizeNoTTS') || document.getElementById('subtitleFontSize')
     const positionEl = document.getElementById('subtitlePositionNoTTS') || document.getElementById('subtitlePosition')
     const bgBarEl    = document.getElementById('subtitleBgBar')
-    const fontSize   = parseInt(fontSizeEl?.value || this.state.subtitleFontSize || '39')
+    const fontSize   = parseInt(fontSizeEl?.value || this.state.subtitleFontSize || '41')
     const position   = positionEl?.value || this.state.subtitlePosition || 'middle'
     const fontColor  = this.state.subtitleFontColor || '#ffffff'
     const hasBgBar   = bgBarEl ? bgBarEl.checked : (this.state.subtitleBgBar !== false)
