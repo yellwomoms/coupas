@@ -3494,55 +3494,72 @@ const App = {
     })
   },
 
-  // ── 자막-TTS 완전 싱크 ───────────────────────────────────────
-  // VAD로 실제 발화 에너지 구간을 감지, mergeGap 조정 가능
-  _detectSpeechRegions(audioBuffer, mergeGap = 0.08) {
-    const sr           = audioBuffer.sampleRate
-    const ch           = audioBuffer.getChannelData(0)
-    const frameLen     = Math.round(sr * 0.02) // 20ms
-    const frames       = []
+  // ══════════════════════════════════════════════════════════════
+  // TTS ↔ 자막 완전 싱크 v4
+  // 원리: 오디오 RMS 에너지로 "음성 타임라인"을 구축하고
+  //       각 자막 줄의 글자 수 비율을 그 타임라인에 정확히 매핑한다.
+  // ══════════════════════════════════════════════════════════════
+
+  // 1) 세밀한 VAD: mergeGap=0.03s 로 단어 단위 버스트 감지
+  //    → 음성 구간 배열(start, end) 반환
+  _detectSpeechRegions(audioBuffer, mergeGap = 0.03) {
+    const sr       = audioBuffer.sampleRate
+    const ch       = audioBuffer.getChannelData(0)
+    const FRAME_MS = 10                          // 10ms 프레임 (더 정밀)
+    const frameLen = Math.round(sr * FRAME_MS / 1000)
+    const frames   = []
+
     for (let i = 0; i < ch.length; i += frameLen) {
-      let s = 0; const e = Math.min(i + frameLen, ch.length)
-      for (let j = i; j < e; j++) s += ch[j] ** 2
+      let s = 0
+      const e = Math.min(i + frameLen, ch.length)
+      for (let j = i; j < e; j++) s += ch[j] * ch[j]
       frames.push(Math.sqrt(s / (e - i)))
     }
+
+    // 임계값: 중앙값의 15% (조용한 목소리에도 대응)
     const sorted    = [...frames].sort((a, b) => a - b)
     const median    = sorted[Math.floor(sorted.length * 0.5)] || 0.001
-    const threshold = Math.max(median * 0.12, 0.002)
+    const threshold = Math.max(median * 0.15, 0.001)
 
-    // ★ 이진탐색에서 재사용할 수 있도록 캐싱
+    // 캐싱 (나중에 재사용)
     this._vadFrames    = frames
+    this._vadFrameMs   = FRAME_MS
     this._vadThreshold = threshold
 
-    const MIN_DUR   = 0.06 // 60ms 이상만 발화로 인정
-
+    const MIN_DUR = 0.04   // 40ms 이상만 유효 발화
     const regions = []
     let on = false, t0 = 0
+
     for (let i = 0; i < frames.length; i++) {
-      const t = i * 0.02
-      if (!on && frames[i] > threshold)  { on = true; t0 = t }
-      else if (on && frames[i] <= threshold) {
+      const t = i * FRAME_MS / 1000
+      if (!on && frames[i] > threshold) {
+        on = true; t0 = t
+      } else if (on && frames[i] <= threshold) {
+        // 침묵 길이 계산
         let g = i
         while (g < frames.length && frames[g] <= threshold) g++
-        const gap = (g - i) * 0.02
-        if (gap < mergeGap && g < frames.length) { i = g - 1 }
-        else {
-          if (t - t0 >= MIN_DUR) regions.push({ start: t0, end: t })
+        const silDur = (g - i) * FRAME_MS / 1000
+        if (silDur < mergeGap && g < frames.length) {
+          i = g - 1  // 짧은 침묵 → 합침
+        } else {
+          const dur = t - t0
+          if (dur >= MIN_DUR) regions.push({ start: t0, end: t })
           on = false
         }
       }
     }
     if (on) {
-      const t = frames.length * 0.02
+      const t = frames.length * FRAME_MS / 1000
       if (t - t0 >= MIN_DUR) regions.push({ start: t0, end: t })
     }
     return regions
   },
 
-  // ── 자막 ↔ TTS 정확 싱크 ────────────────────────────────────
-  // 자막 줄 수 N에 맞게 VAD mergeGap 이진탐색 → 버스트 1:1 매핑
+  // 2) 자막 ↔ TTS 싱크 핵심 함수
+  //    음성 타임라인(연속 발화 구간)을 구축하고
+  //    각 자막 줄의 글자 수 비율로 정확한 시간 구간을 산출한다.
   _buildSubtitleSegmentsFromSpeech(script, duration, ctx, fontSize, canvasW, speechRegions) {
-    // ── 1) 대본 → 자막 줄 목록 ───────────────────────────────
+    // ── A) 자막 줄 생성 ──────────────────────────────────────
     const SAFE_W    = canvasW - 120
     const MAX_CHARS = 14
     ctx.font = `bold ${fontSize}px 'Apple SD Gothic Neo','Noto Sans KR',sans-serif`
@@ -3550,7 +3567,9 @@ const App = {
     const rawLines = script.trim().split('\n').filter(l => l.trim())
     const chunks = []
     for (const line of rawLines) {
-      for (const p of line.split(/(?<=[.!?~。！？])\s*/)) {
+      // 문장 부호 뒤 공백에서 분리
+      const parts = line.split(/(?<=[.!?~。！？,，])\s+/)
+      for (const p of parts) {
         if (p.trim()) chunks.push(p.trim())
       }
     }
@@ -3571,9 +3590,9 @@ const App = {
       for (const ln of result) {
         if (ctx.measureText(ln).width <= SAFE_W) { out.push(ln); continue }
         let tmp = ''
-        for (const ch of ln) {
-          const t2 = tmp + ch
-          if (ctx.measureText(t2).width > SAFE_W && tmp) { out.push(tmp); tmp = ch }
+        for (const c of ln) {
+          const t2 = tmp + c
+          if (ctx.measureText(t2).width > SAFE_W && tmp) { out.push(tmp); tmp = c }
           else tmp = t2
         }
         if (tmp) out.push(tmp)
@@ -3588,97 +3607,78 @@ const App = {
     if (subtitleLines.length === 0) return []
     const N = subtitleLines.length
 
-    // ── 2) speechRegions가 없으면 폴백 ───────────────────────
+    // ── B) 폴백: speechRegions 없으면 균등 분배 ──────────────
     if (!speechRegions || speechRegions.length === 0) {
       return this._buildSubtitleSegments(script, duration, ctx, fontSize, canvasW, 0)
     }
 
-    // ── 3) mergeGap 이진탐색: 버스트 수 = N이 되도록 ─────────
-    // speechRegions는 mergeGap=0.08 기준으로 넘어온 세밀한 버스트
-    // RMS 에너지 프레임은 this._vadFrames 에 캐싱됨
-    const getRegions = (gap, framesArr, thr) => {
-      const MIN_DUR = 0.06
-      const regs = []
-      let on = false, t0 = 0
-      for (let i = 0; i < framesArr.length; i++) {
-        const t = i * 0.02
-        if (!on && framesArr[i] > thr) { on = true; t0 = t }
-        else if (on && framesArr[i] <= thr) {
-          let g = i
-          while (g < framesArr.length && framesArr[g] <= thr) g++
-          const gapDur = (g - i) * 0.02
-          if (gapDur < gap && g < framesArr.length) { i = g - 1 }
-          else {
-            if (t - t0 >= MIN_DUR) regs.push({ start: t0, end: t })
-            on = false
-          }
-        }
-      }
-      if (on) { const t = framesArr.length * 0.02; if (t - t0 >= MIN_DUR) regs.push({ start: t0, end: t }) }
-      return regs
+    // ── C) 음성 타임라인 구축 ────────────────────────────────
+    // 각 발화 버스트를 이어 붙여 "가상 타임라인" 생성
+    // virtualTime = 침묵을 제거한 순수 발화 시간
+    const totalSpeechDur = speechRegions.reduce((s, r) => s + (r.end - r.start), 0)
+    if (totalSpeechDur < 0.1) {
+      return this._buildSubtitleSegments(script, duration, ctx, fontSize, canvasW, 0)
     }
 
-    // 캐싱된 RMS 에너지 배열 사용 (없으면 speechRegions 직접 사용)
-    let regions = speechRegions
-    if (this._vadFrames && this._vadThreshold) {
-      const fr  = this._vadFrames
-      const thr = this._vadThreshold
-      // 이진탐색으로 버스트 수 = N 찾기
-      let lo = 0.02, hi = 4.0, best = getRegions(0.5, fr, thr)
-      for (let iter = 0; iter < 25; iter++) {
-        const mid = (lo + hi) / 2
-        const r   = getRegions(mid, fr, thr)
-        if (r.length === N) { best = r; break }
-        if (r.length > N)   lo = mid
-        else               { hi = mid; if (r.length > 0) best = r }
-      }
-      // 여전히 N이 아니면 0.02 간격 세밀 탐색
-      if (best.length !== N) {
-        let minDiff = Math.abs(best.length - N)
-        for (let g = 0.02; g <= 4.0; g += 0.02) {
-          const r = getRegions(g, fr, thr)
-          const d = Math.abs(r.length - N)
-          if (d < minDiff) { minDiff = d; best = r }
-          if (d === 0) break
+    // 각 자막 줄의 발음 시간 추정: 글자 수 비례
+    const charCounts  = subtitleLines.map(l => Math.max(l.replace(/\s/g, '').length, 1))
+    const totalChars  = charCounts.reduce((a, b) => a + b, 0)
+    // 각 줄이 차지하는 가상 타임라인 비율
+    const lineRatios  = charCounts.map(c => c / totalChars)
+
+    // 가상 타임라인에서 각 줄의 시작 위치(0~1)
+    const lineVStart = []
+    let acc = 0
+    for (const r of lineRatios) {
+      lineVStart.push(acc)
+      acc += r
+    }
+    lineVStart.push(1.0) // 마지막 경계
+
+    // 가상 위치(0~1) → 실제 오디오 시간 역매핑 함수
+    const virtualToReal = (v) => {
+      const targetV = v * totalSpeechDur
+      let cum = 0
+      for (const reg of speechRegions) {
+        const regDur = reg.end - reg.start
+        if (cum + regDur >= targetV) {
+          return reg.start + (targetV - cum)
         }
+        cum += regDur
       }
-      regions = best
+      return speechRegions[speechRegions.length - 1].end
     }
 
-    if (regions.length === 0) return this._buildSubtitleSegments(script, duration, ctx, fontSize, canvasW, 0)
-
-    // ── 4) 버스트 그룹 → 자막 줄 1:1 매핑 ────────────────────
-    const nR = regions.length
+    // ── D) 자막 세그먼트 생성 ────────────────────────────────
     const segments = []
     for (let i = 0; i < N; i++) {
-      const r0    = Math.floor(i * nR / N)
-      const r1    = Math.floor((i + 1) * nR / N)
-      const group = regions.slice(r0, Math.max(r0 + 1, r1))
+      const realStart = virtualToReal(lineVStart[i])
+      const realEnd   = virtualToReal(lineVStart[i + 1])
 
-      const segStart = group[0].start
-      let segEnd
-      if (i < N - 1) {
-        const nextR0    = Math.floor((i + 1) * nR / N)
-        const nextStart = regions[nextR0]?.start ?? duration
-        const thisEnd   = group[group.length - 1].end
-        segEnd = thisEnd + (nextStart - thisEnd) * 0.7
-      } else {
-        segEnd = Math.min(group[group.length - 1].end + 0.5, duration)
-      }
+      // 다음 세그먼트 시작 직전까지 자막 유지 (0.05s 여유)
+      const nextStart = i < N - 1 ? virtualToReal(lineVStart[i + 1]) : duration
+      const endTime   = Math.min(realEnd, nextStart - 0.05)
 
       segments.push({
-        text: subtitleLines[i],
+        text:  subtitleLines[i],
         lines: [subtitleLines[i]],
-        start: segStart,
-        end: Math.max(segEnd, segStart + 0.1)
+        start: realStart,
+        end:   Math.max(endTime, realStart + 0.08)
       })
     }
 
-    if (segments.length > 0)
-      segments[segments.length - 1].end = Math.min(segments[segments.length - 1].end, duration)
+    // 마지막 세그먼트는 오디오 끝까지
+    if (segments.length > 0) {
+      const last = segments[segments.length - 1]
+      last.end = Math.min(
+        speechRegions[speechRegions.length - 1].end + 0.3,
+        duration
+      )
+    }
+
     return segments
   }
-
+}
 
 // 앱 시작
 document.addEventListener('DOMContentLoaded', () => App.init())

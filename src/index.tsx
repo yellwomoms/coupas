@@ -174,7 +174,7 @@ function getMainHTML(initData: any): string {
     </div>
     <style>@keyframes _spin{to{transform:rotate(360deg)}}</style>
   </div>
-  <script src="/static/app.js?v=20260421" defer></script>
+  <script src="/static/app.js?v=20260422" defer></script>
 </body>
 </html>`
 }
